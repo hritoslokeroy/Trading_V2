@@ -1,12 +1,12 @@
 {
   "groww": {
-    "api_key_env": "HARNESS_GROWW_API_KEY",
-    "api_secret_env": "HARNESS_GROWW_API_SECRET",
-    "access_token_env": "HARNESS_GROWW_ACCESS_TOKEN",
-    "totp_secret_env": "HARNESS_GROWW_TOTP_SECRET"
+    "api_key_env": "GROWW_API_KEY",
+    "api_secret_env": "GROWW_API_SECRET",
+    "access_token_env": "GROWW_ACCESS_TOKEN",
+    "totp_secret_env": "GROWW_TOTP_SECRET"
   },
   "risk_limits": {
-    "trading_enabled": true,
+    "trading_enabled": false,
     "max_order_value_inr": 1000,
     "max_position_value_inr": 1000,
     "max_daily_loss_inr": 500,
@@ -18,7 +18,29 @@
   "data": {
     "timezone": "Asia/Kolkata",
     "rsi_period": 14,
-    "supported_symbols": ["RELIANCE"],
+    "supported_symbols": [
+      "RELIANCE"
+    ],
     "candle_interval_minutes": 1
+  },
+  "charges": {
+    "profile": "Groww NSE cash intraday indicative estimate",
+    "rates_verified": false,
+    "notes": "Verify current Groww pricing and contract-note rounding. Rates are fractions of turnover. No subscription, auto-square-off, delivery DP charges or income tax included.",
+    "rates": {
+      "brokerage_rate": 0.001,
+      "brokerage_min_inr": 5,
+      "brokerage_max_inr": 20,
+      "small_order_brokerage_cap_rate": 0.025,
+      "stt_sell_rate": 0.00025,
+      "stamp_buy_rate": 3e-05,
+      "exchange_rate": 2.97e-05,
+      "sebi_rate": 1e-06,
+      "ipft_rate": 1e-06,
+      "gst_rate": 0.18
+    }
+  },
+  "execution": {
+    "mode": "disabled"
   }
 }

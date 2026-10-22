@@ -16,7 +16,7 @@ from threading import RLock
 import numpy as np
 import pandas as pd
 import torch
-from src.agents.quant_agent import QuantLSTMBrain
+from quant_agent import QuantLSTMBrain
 
 
 class LiveCandleBuffer:

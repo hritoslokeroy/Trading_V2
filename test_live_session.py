@@ -1,7 +1,7 @@
 """Offline live-session integration harness.
 
 Run from the repository root:
-    python tests/test_live_session.py
+    python test_live_session.py
 
 Uses the real session loop, LiveCandleBuffer, saved feature scaling, real LSTM
 and PPO checkpoint loading, RiskGatekeeper, and filesystem journal.
@@ -37,18 +37,18 @@ import pyotp
 import torch
 from stable_baselines3 import PPO
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from src.agents.quant_agent import QuantLSTMBrain
-from src.execution.groww_env import (
+from quant_agent import QuantLSTMBrain
+from groww_env import (
     ExecutionHalted,
     IST,
     LiveGrowwExecutionAdapter,
 )
-from src.utils.data_loader import _wilder_rsi
-from src.utils.live_buffer import LiveCandleBuffer
+from data_loader import _wilder_rsi
+from live_buffer import LiveCandleBuffer
 
 
 class SimulatedMarketClock:
@@ -418,6 +418,8 @@ class TestLiveSession(
         self.secret = pyotp.random_base32()
 
         self.settings = {
+            "execution": {"mode": "live"},
+            "charges": {"rates_verified": True},
             "groww": {
                 f"{field}_env": (
                     f"HARNESS_GROWW_{field.upper()}"
@@ -495,6 +497,7 @@ class TestLiveSession(
         (
             self.root / "run_metrics.json"
         ).write_text(json.dumps({
+            "simulator_version": 2,
             "algorithm": "PPO",
             "symbol": "RELIANCE",
             "features": list(

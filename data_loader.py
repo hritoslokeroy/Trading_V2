@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import numpy as np
 import pandas as pd
 
-DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parents[2] / "config" / "settings.json"
+DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 
 
 @dataclass(frozen=True)

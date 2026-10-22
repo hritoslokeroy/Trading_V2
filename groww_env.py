@@ -40,10 +40,11 @@ import torch
 from growwapi import GrowwAPI, GrowwFeed
 from stable_baselines3 import PPO
 
-from src.agents.quant_agent import QuantLSTMBrain
-from src.execution.risk_manager import DEFAULT_SETTINGS_PATH, RiskGatekeeper
-from src.utils.data_loader import load_credentials, load_settings
-from src.utils.live_buffer import LiveCandleBuffer
+from quant_agent import QuantLSTMBrain
+from charges import IntradayCharges
+from risk_manager import DEFAULT_SETTINGS_PATH, RiskGatekeeper
+from data_loader import load_credentials, load_settings
+from live_buffer import LiveCandleBuffer
 
 IST = ZoneInfo("Asia/Kolkata")
 LOG = logging.getLogger(__name__)
@@ -229,6 +230,7 @@ class LiveGrowwExecutionAdapter:
         self.journal_path = Path(journal_path)
         self.settings_path = Path(settings_path)
         self.settings = load_settings(settings_path)
+        self.charges = IntradayCharges.from_settings(self.settings)
         self.gate = RiskGatekeeper(settings_path)
 
         self.quantity = _integer(quantity, nonnegative=True)
@@ -448,7 +450,8 @@ class LiveGrowwExecutionAdapter:
             metadata = json.loads(metadata_path.read_text())
 
             if (
-                metadata["algorithm"] != "PPO"
+                metadata.get("simulator_version") != 2
+                or metadata["algorithm"] != "PPO"
                 or metadata["symbol"] != self._symbol
                 or metadata["features"] != list(QuantLSTMBrain.FEATURES)
                 or metadata["target"] != "next_close_fractional_return"
@@ -989,7 +992,7 @@ class LiveGrowwExecutionAdapter:
         )
         if (
             target is not None
-            or value > account.cash
+            or value + Decimal(str(self.charges.estimate(value, "BUY")["total"])) > account.cash
             or value > max_position
             or not self.gate.validate_new_order(
                 self._symbol,
@@ -1141,6 +1144,11 @@ class LiveGrowwExecutionAdapter:
                 raise ValueError(
                     "Instrument and symbol are required"
                 )
+
+            if self.settings.get("execution", {}).get("mode") != "live":
+                raise ValueError("Live execution requires explicit execution.mode=live")
+            if self.settings.get("charges", {}).get("rates_verified") is not True:
+                raise ValueError("Verify the current charge rates before live execution")
 
             if not self.gate.trading_enabled:
                 raise ValueError(

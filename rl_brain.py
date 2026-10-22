@@ -1,8 +1,8 @@
-"""Offline, single-instrument RL simulation and Stable-Baselines3 policies.
+"""Offline NSE cash intraday simulator; next-open execution, INR accounting.
 
-Each episode covers one exchange-local trading day. Orders execute at
-the NEXT candle's open, with adverse slippage and fees. Actions are 0=Hold,
-1=Buy one fixed lot, 2=Sell the existing long lot; shorting is not supported.
+Observations use completed candles. Buy/Sell actions fill at the next open.
+Protective exits handle opening gaps before actions and intrabar low crossings.
+Minute bars cannot establish tick-by-tick fill certainty; fills are estimates.
 """
 from __future__ import annotations
 
@@ -13,69 +13,97 @@ import numpy as np
 import pandas as pd
 from gymnasium import spaces
 from stable_baselines3 import PPO, DQN
+from charges import IntradayCharges
+from risk_manager import DEFAULT_SETTINGS_PATH, RiskGatekeeper
 
-from src.execution.risk_manager import DEFAULT_SETTINGS_PATH, RiskGatekeeper
 
 def _finite(value, name: str, *, positive: bool = False) -> float:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)):
         raise ValueError(f"{name} must be a finite number")
     result = float(value)
-    if not np.isfinite(result) or (positive and result <= 0) or (not positive and result < 0):
+    if not np.isfinite(result) or (result <= 0 if positive else result < 0):
         raise ValueError(f"{name} must be finite and {'positive' if positive else 'nonnegative'}")
     return result
 
+
 class TradingEnvironment(gym.Env):
-    """Four observations, three actions, auditable decomposed step rewards."""
+    """Fully funded, single long lot with fees, protective stops and net loss caps."""
     metadata = {"render_modes": []}
     OBSERVATION_NAMES = ("lstm_score", "cash", "position_count", "open_mtm")
 
-    def __init__(
-        self, candles: pd.DataFrame, *, symbol: str,
-        settings_path: str | Path = DEFAULT_SETTINGS_PATH,
-        initial_cash: float = 100_000.0, lot_size: int = 1,
-        fee_bps: float = 5.0, slippage_bps: float = 2.0,
-        turnover_penalty: float = 0.0001, overtrade_penalty: float = 0.001,
-        risk_penalty: float = 0.01, max_trades_per_episode: int = 10,
-    ):
+    def __init__(self, candles: pd.DataFrame, *, symbol: str,
+                 settings_path: str | Path = DEFAULT_SETTINGS_PATH,
+                 initial_cash: float = 100_000.0, lot_size: int = 1,
+                 fee_bps: float | None = None, slippage_bps: float = 2.0,
+                 turnover_penalty: float = 0.0001, overtrade_penalty: float = 0.001,
+                 risk_penalty: float = 0.01, max_trades_per_episode: int = 10):
         super().__init__()
         self.settings_path = Path(settings_path)
-        if "timestamp" in candles.columns:
-            self.df = candles.reset_index(drop=True)
-        elif isinstance(candles.index, pd.DatetimeIndex):
-            # step() reads the local clock from a "timestamp" column; keep the index as that column.
-            self.df = candles.rename_axis("timestamp").reset_index()
-        else:
-            raise ValueError("candles need a DatetimeIndex or a timestamp column")
-        self.initial_cash = _finite(initial_cash, "initial_cash", positive=True)
-        
-        if isinstance(lot_size, bool) or not isinstance(lot_size, int) or lot_size <= 0:
-            raise ValueError("lot_size must be a positive integer")
+        self.settings = json.loads(self.settings_path.read_text())
+        self.timezone = self.settings.get('data', {}).get('timezone', 'Asia/Kolkata')
+        if self.timezone != 'Asia/Kolkata':
+            raise ValueError('NSE intraday simulation requires Asia/Kolkata')
+        self.charges = IntradayCharges.from_settings(self.settings)
+        self.fee_rate = None if fee_bps is None else _finite(fee_bps, 'fee_bps') / 10000
+        if self.fee_rate is not None and self.fee_rate >= 1:
+            raise ValueError('fee_bps must be below 10000')
+        self.initial_cash = _finite(initial_cash, 'initial_cash', positive=True)
+        if isinstance(lot_size, bool) or not isinstance(lot_size, int) or lot_size != 1:
+            raise ValueError('Current model and live adapter require lot_size=1')
         if isinstance(max_trades_per_episode, bool) or not isinstance(max_trades_per_episode, int) or max_trades_per_episode < 0:
-            raise ValueError("max_trades_per_episode must be a nonnegative integer")
+            raise ValueError('max_trades_per_episode must be a nonnegative integer')
         if not isinstance(symbol, str) or not symbol.strip():
-            raise ValueError("symbol must be nonempty")
-            
+            raise ValueError('symbol must be nonempty')
         self.symbol, self.lot_size = symbol.strip().upper(), lot_size
-        self.fee_rate = _finite(fee_bps, "fee_bps") / 10_000
-        self.slippage = _finite(slippage_bps, "slippage_bps") / 10_000
-        self.turnover_penalty = _finite(turnover_penalty, "turnover_penalty")
-        self.overtrade_penalty = _finite(overtrade_penalty, "overtrade_penalty")
-        self.risk_penalty = _finite(risk_penalty, "risk_penalty")
+        self.slippage = _finite(slippage_bps, 'slippage_bps') / 10000
+        if self.slippage >= 1:
+            raise ValueError('slippage_bps must be below 10000')
+        self.turnover_penalty = _finite(turnover_penalty, 'turnover_penalty')
+        self.overtrade_penalty = _finite(overtrade_penalty, 'overtrade_penalty')
+        self.risk_penalty = _finite(risk_penalty, 'risk_penalty')
         self.max_trades = max_trades_per_episode
-        
+        self.max_position = _finite(self.settings['risk_limits']['max_position_value_inr'], 'max_position_value_inr', positive=True)
+        RiskGatekeeper(self.settings_path)
+        self.df = self._validate(candles)
         self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(
-            low=np.array([-np.inf, 0.0, 0.0, -np.inf], dtype=np.float32),
-            high=np.array([np.inf, np.inf, 1.0, np.inf], dtype=np.float32),
-            dtype=np.float32
-        )
-        
-        with self.settings_path.open(encoding="utf-8") as stream:
-            settings = json.load(stream)
-        self.timezone = settings.get("data", {}).get("timezone", "Asia/Kolkata")
-        
-        # Initial compilation verification check
-        RiskGatekeeper(self.settings_path)
+            low=np.array([-np.inf, -np.inf, 0, -np.inf], dtype=np.float32),
+            high=np.array([np.inf, np.inf, 1, np.inf], dtype=np.float32), dtype=np.float32)
+        self._done = True
+
+    def _validate(self, candles):
+        if not isinstance(candles, pd.DataFrame) or candles.columns.has_duplicates:
+            raise ValueError('candles must be a DataFrame with unique columns')
+        df = candles.copy()
+        if 'timestamp' in df:
+            stamps = pd.DatetimeIndex(pd.to_datetime(df.pop('timestamp'), errors='raise'))
+        elif isinstance(df.index, pd.DatetimeIndex):
+            stamps = df.index
+        else:
+            raise ValueError('candles need a DatetimeIndex or timestamp column')
+        stamps = stamps.tz_localize(self.timezone) if stamps.tz is None else stamps.tz_convert(self.timezone)
+        if len(df) < 2 or stamps.hasnans or stamps.has_duplicates or not stamps.is_monotonic_increasing:
+            raise ValueError('At least two sorted, unique candles are required')
+        if (len(set(stamps.date)) != 1 or not (np.diff(stamps.as_unit('ns').asi8) == 60_000_000_000).all()
+                or (stamps.second != 0).any() or (stamps.microsecond != 0).any() or (stamps.nanosecond != 0).any()
+                or (stamps.dayofweek >= 5).any()
+                or (stamps.strftime('%H:%M') < '09:15').any() or (stamps.strftime('%H:%M') > '15:29').any()):
+            raise ValueError('Use one contiguous one-minute NSE weekday session, 09:15–15:29 IST')
+        required = ['open', 'high', 'low', 'close']
+        if not set(required).issubset(df):
+            raise ValueError('candles require open, high, low and close')
+        if 'lstm_score' not in df:
+            df['lstm_score'] = 0.0
+        numeric = required + ['lstm_score']
+        df[numeric] = df[numeric].apply(pd.to_numeric, errors='raise')
+        values = df[numeric].to_numpy(dtype=float)
+        if not np.isfinite(values).all() or (df[required] <= 0).any().any():
+            raise ValueError('Prices must be positive and features finite')
+        if ((df.high < df[required].max(axis=1)) | (df.low > df[required].min(axis=1))).any():
+            raise ValueError('Inconsistent OHLC bounds')
+        df = df.reset_index(drop=True)
+        df['timestamp'] = stamps
+        return df
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -86,112 +114,143 @@ class TradingEnvironment(gym.Env):
         self.entry_price = 0.0
         self.trade_count = 0
         self.daily_pnl = 0.0
-        return self._get_obs(), {}
+        self.total_charges = 0.0
+        self.charge_breakdown = {}
+        self.executions = []
+        self._done = False
+        return self._get_obs(), self._info()
+
+    def _equity(self, price):
+        return self.cash + self.position * price * self.lot_size
 
     def _get_obs(self):
-        score = float(self.df.loc[self.current_step, "lstm_score"]) if "lstm_score" in self.df.columns else 0.0
-        close = float(self.df.loc[self.current_step, "close"])
-        open_mtm = (close - self.entry_price) * self.lot_size if self.position > 0 else 0.0
-        return np.array([score, self.cash, float(self.position), open_mtm], dtype=np.float32)
+        row = self.df.iloc[self.current_step]
+        mtm = (row.close - self.entry_price) * self.lot_size if self.position else 0.0
+        values = np.array([row.lstm_score, self.cash, self.position, mtm], dtype=np.float64)
+        if not np.isfinite(values).all() or (np.abs(values) > np.finfo(np.float32).max).any():
+            raise ValueError('Account or feature observations overflow float32')
+        return values.astype(np.float32)
+
+    def _fees(self, value, side):
+        if self.fee_rate is not None:
+            return {'legacy_fee': value * self.fee_rate, 'total': value * self.fee_rate}
+        return self.charges.estimate(value, side)
+
+    def _execute(self, side, price, info, *, forced=False, reason=None):
+        value = price * self.lot_size
+        fees = self._fees(value, side)
+        self.cash += (value if side == 'SELL' else -value) - fees['total']
+        self.total_charges += fees['total']
+        for key, amount in fees.items():
+            if key != 'total':
+                self.charge_breakdown[key] = self.charge_breakdown.get(key, 0.0) + amount
+        self.position = 1 if side == 'BUY' else 0
+        self.entry_price = price if self.position else 0.0
+        if not forced:
+            self.trade_count += 1
+        key = 'forced_exit_count' if forced else ('buy_count' if side == 'BUY' else 'sell_count')
+        info[key] += 1
+        info['total_executed_trades'] += 1
+        self.executions.append({'side': side, 'price': price, 'quantity': self.lot_size,
+                                'timestamp': self.df.iloc[self.current_step].timestamp.isoformat(),
+                                'charges': fees, 'forced': forced, 'reason': reason})
+
+    def _info(self):
+        equity = self._equity(float(self.df.iloc[self.current_step].close))
+        self.daily_pnl = equity - self.initial_cash
+        return {'risk_violations': 0, 'order_rejected': False, 'equity': equity,
+                'daily_pnl': self.daily_pnl, 'cash': self.cash, 'buy_count': 0,
+                'sell_count': 0, 'forced_exit_count': 0, 'total_executed_trades': 0,
+                'trade_count': self.trade_count, 'total_charges': self.total_charges,
+                'charge_breakdown': self.charge_breakdown.copy(), 'reason': None}
+
+    def _exit(self, price, info, reason):
+        if self.position:
+            self._execute('SELL', price * (1 - self.slippage), info, forced=True, reason=reason)
 
     def step(self, action):
-        reward = 0.0
-        terminated = False
-        truncated = False
-        info = {"risk_violations": 0, "order_rejected": False, "equity": self.cash, "daily_pnl": self.daily_pnl, "cash": self.cash, "buy_count": 0, "sell_count": 0, "forced_exit_count": 0, "total_executed_trades": 0, "trade_count": self.trade_count, "reason": None}
-        
-        current_close = float(self.df.loc[self.current_step, "close"])
-        timestamp_str = str(self.df.loc[self.current_step, "timestamp"])
-        time_only_str = timestamp_str.split()[-1][:5]
-        
-        next_idx = min(self.current_step + 1, len(self.df) - 1)
-        next_open = float(self.df.loc[next_idx, "open"])
-        
-        initial_equity = self.cash + ((current_close - self.entry_price) * self.lot_size if self.position > 0 else 0.0)
-        
-        if self.gatekeeper.check_time_cutoff(time_only_str) or not self.gatekeeper.check_daily_loss(self.daily_pnl):
-            if self.position > 0:
-                fill_price = next_open * (1.0 - self.slippage)
-                exit_value = fill_price * self.lot_size
-                self.cash += exit_value - (exit_value * self.fee_rate)
-                self.position = 0
-                info["forced_exit_count"] = 1
-                info["total_executed_trades"] += 1
-            terminated = True
-            info["reason"] = "risk_cutoff_breach"
-            return self._get_obs(), -self.risk_penalty, terminated, truncated, info
-
-        if action == 1:
-            if self.position == 0:
-                order_value = next_open * self.lot_size
-                if self.gatekeeper.validate_new_order(self.symbol, order_value, self.position):
-                    fill_price = next_open * (1.0 + self.slippage)
-                    cost = fill_price * self.lot_size
-                    self.cash -= cost + (cost * self.fee_rate)
-                    self.entry_price = fill_price
-                    self.position = 1
-                    self.trade_count += 1
-                    info["buy_count"] = 1
-                    info["total_executed_trades"] += 1
-                    reward -= self.turnover_penalty
-                    if self.trade_count > self.max_trades:
-                        reward -= self.overtrade_penalty
-                else:
-                    info["order_rejected"] = True
-                    reward -= self.risk_penalty
+        if self._done:
+            raise RuntimeError('Call reset before stepping a finished episode')
+        if isinstance(action, (bool, np.bool_)) or not self.action_space.contains(action):
+            raise ValueError('action must be 0 (Hold), 1 (Buy), or 2 (Sell)')
+        initial_equity = self._equity(float(self.df.iloc[self.current_step].close))
+        info = self._info()
+        penalty = 0.0
+        now = self.df.iloc[self.current_step].timestamp
+        # At a known close, act on the risk state immediately, without advancing time.
+        if self.gatekeeper.check_time_cutoff(now.strftime('%H:%M:%S')) or not self.gatekeeper.check_daily_loss(self.daily_pnl):
+            self._exit(float(self.df.iloc[self.current_step].close), info, 'risk_cutoff_breach')
+            self._done = True
+            info['reason'] = 'risk_cutoff_breach'
+            penalty += self.risk_penalty
+        else:
+            self.current_step += 1
+            row = self.df.iloc[self.current_step]
+            opening = float(row.open)
+            cutoff = self.gatekeeper.check_time_cutoff(row.timestamp.strftime('%H:%M:%S'))
+            gap_loss = not self.gatekeeper.check_daily_loss(self._equity(opening) - self.initial_cash)
+            if cutoff or gap_loss:
+                self._exit(opening, info, 'time_cutoff' if cutoff else 'daily_loss')
+                self._done = True
+                info['reason'] = 'risk_cutoff_breach'
             else:
-                info["risk_violations"] = 1
-                reward -= self.risk_penalty
+                # A gap below the protective stop takes precedence over an action.
+                stopped = False
+                if self.position and opening <= float(self.gatekeeper.calculate_stop_loss(self.entry_price, 'BUY')):
+                    self._exit(opening, info, 'stop_loss_gap')
+                    stopped = True
+                if action == 1 and not stopped:
+                    price = opening * (1 + self.slippage)
+                    value = price * self.lot_size
+                    if (not self.position and value + self._fees(value, 'BUY')['total'] <= self.cash
+                            and value <= self.max_position
+                            and self.gatekeeper.validate_new_order(self.symbol, value, self.position)):
+                        self._execute('BUY', price, info)
+                    else:
+                        info['order_rejected'] = True
+                        penalty += self.risk_penalty
+                elif action == 2 and self.position:
+                    self._execute('SELL', opening * (1 - self.slippage), info)
+                # Use the higher protective trigger: 1% stop or net MTM loss cap.
+                # A bar low reveals a crossing, not the exact tick or guaranteed fill.
+                if self.position:
+                    stop = float(self.gatekeeper.calculate_stop_loss(self.entry_price, 'BUY'))
+                    max_loss = float(self.settings['risk_limits']['max_daily_loss_inr'])
+                    loss_trigger = (self.initial_cash - max_loss - self.cash) / self.lot_size
+                    trigger = max(stop, loss_trigger)
+                    if float(row.low) <= trigger:
+                        reason = 'daily_loss' if loss_trigger >= stop else 'stop_loss'
+                        self._exit(min(opening, trigger), info, reason)
+                        if reason == 'daily_loss':
+                            self.gatekeeper.halt_trading()
+                            self._done = True
+                            info['reason'] = 'risk_cutoff_breach'
+                if not self.gatekeeper.check_daily_loss(self._equity(float(row.close)) - self.initial_cash):
+                    self._exit(float(row.close), info, 'daily_loss')
+                    self._done = True
+                    info['reason'] = 'risk_cutoff_breach'
+                if self.current_step == len(self.df) - 1:
+                    # End of data is a close auction estimate, not a second fill at its open.
+                    self._exit(float(row.close), info, 'end_of_data')
+                    self._done = True
+                    info['reason'] = info['reason'] or 'end_of_data'
+        penalty += self.turnover_penalty * (info['buy_count'] + info['sell_count'])
+        if self.trade_count > self.max_trades and info['buy_count'] + info['sell_count']:
+            penalty += self.overtrade_penalty
+        # Always synchronize financial fields after all fills, including forced exits.
+        final = self._info()
+        for key in ('equity', 'daily_pnl', 'cash', 'trade_count', 'total_charges', 'charge_breakdown'):
+            info[key] = final[key]
+        reward = (info['equity'] - initial_equity) / self.initial_cash - penalty
+        return self._get_obs(), float(reward), self._done, False, info
 
-        elif action == 2:
-            if self.position > 0:
-                fill_price = next_open * (1.0 - self.slippage)
-                revenue = fill_price * self.lot_size
-                self.cash += revenue - (revenue * self.fee_rate)
-                trade_pnl = (fill_price - self.entry_price) * self.lot_size
-                self.daily_pnl += trade_pnl
-                self.position = 0
-                self.entry_price = 0.0
-                info["sell_count"] = 1
-                info["total_executed_trades"] += 1
-                reward -= self.turnover_penalty
-            else:
-                info["risk_violations"] = 1
-                reward -= self.risk_penalty
-
-        self.current_step += 1
-        if self.current_step >= len(self.df) - 1:
-            terminated = True
-            if self.position > 0:
-                revenue = next_open * (1.0 - self.slippage) * self.lot_size
-                self.cash += revenue - (revenue * self.fee_rate)
-                trade_pnl = (next_open * (1.0 - self.slippage) - self.entry_price) * self.lot_size
-                self.daily_pnl += trade_pnl
-                self.position = 0
-                info["forced_exit_count"] = 1
-                info["total_executed_trades"] += 1
-            info["reason"] = "end_of_data"
-
-        final_close = float(self.df.loc[min(self.current_step, len(self.df)-1), "close"])
-        final_equity = self.cash + ((final_close - self.entry_price) * self.lot_size if self.position > 0 else 0.0)
-        equity_change = (final_equity - initial_equity) / self.initial_cash
-        reward += equity_change
-
-        info["equity"] = final_equity
-        info["cash"] = self.cash
-        info["daily_pnl"] = self.daily_pnl
-        info["trade_count"] = self.trade_count
-
-        return self._get_obs(), float(reward), terminated, truncated, info
 
 class RLTradingBrain:
-    """Wrapper mapping configuration algorithms smoothly to Gym targets."""
-    ALGORITHMS = ("PPO", "DQN")
-    def __init__(self, env: gym.Env, algorithm: str = "PPO", seed: int = 42, device: str = "cpu", model_kwargs: dict | None = None):
+    """Stable-Baselines3 policy construction for offline training."""
+    ALGORITHMS = ('PPO', 'DQN')
+
+    def __init__(self, env, algorithm='PPO', seed=42, device='cpu', model_kwargs=None):
         if algorithm not in self.ALGORITHMS:
-            raise ValueError(f"Unknown RL target framework: {algorithm}")
-        kwargs = model_kwargs or {}
-        if algorithm == "PPO":
-            self.model = PPO("MlpPolicy", env, verbose=0, seed=seed, device=device, **kwargs)
-        else:
-            self.model = DQN("MlpPolicy", env, verbose=0, seed=seed, device=device, **kwargs)
+            raise ValueError('Unknown RL target framework: ' + str(algorithm))
+        cls = PPO if algorithm == 'PPO' else DQN
+        self.model = cls('MlpPolicy', env, verbose=0, seed=seed, device=device, **(model_kwargs or {}))

@@ -1,11 +1,10 @@
---index-url https://pytorch.org
-torch
-torchvision
-torchaudio
+--index-url https://pypi.org/simple
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
 pandas==2.2.3
 numpy==1.26.4
 gymnasium==0.29.1
 stable-baselines3==2.3.2
-growwapi==0.1.5
+growwapi==1.5.0
 pyotp==2.9.0
 scikit-learn==1.5.2

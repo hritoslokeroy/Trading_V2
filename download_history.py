@@ -1,9 +1,9 @@
 """Download 1-minute NSE cash candles from Groww into the CSV format the trainer reads.
 
 Run from the repository root (credentials come from the environment variables named in
-config/settings.json; nothing is printed or stored):
+settings.json; nothing is printed or stored):
 
-    python scripts/download_history.py --symbol RELIANCE --start 2026-07-01 --end 2026-10-21
+    python download_history.py --symbol RELIANCE --start 2026-07-01 --end 2026-10-21
 
 Output: data/historical/<SYMBOL>_1m.csv with columns timestamp,open,high,low,close,volume.
 Read-only: this script never places orders. Groww limits 1-minute requests to 30 days, so the
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
@@ -106,7 +106,7 @@ def main(argv=None) -> int:
     parser.add_argument("--symbol", required=True, help="NSE trading symbol, e.g. RELIANCE")
     parser.add_argument("--start", type=date.fromisoformat, help="first date, YYYY-MM-DD")
     parser.add_argument("--end", type=date.fromisoformat, help="last date, YYYY-MM-DD")
-    parser.add_argument("--settings", type=Path, default=REPOSITORY_ROOT / "config" / "settings.json")
+    parser.add_argument("--settings", type=Path, default=REPOSITORY_ROOT / "settings.json")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--verify", action="store_true", help="only inspect an existing output CSV")
     args = parser.parse_args(argv)
@@ -122,7 +122,7 @@ def main(argv=None) -> int:
 
     import pyotp
     from growwapi import GrowwAPI
-    from src.utils.data_loader import load_credentials
+    from data_loader import load_credentials
 
     credentials = load_credentials(args.settings, required=("api_key", "totp_secret"))
     totp = pyotp.TOTP(credentials.totp_secret, digits=6).now()

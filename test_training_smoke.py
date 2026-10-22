@@ -1,7 +1,7 @@
 """Offline training smoke test: synthetic one-session CSV -> train_pipeline -> checkpoint checks.
 
 Run from the repository root:
-    python tests/test_training_smoke.py
+    python test_training_smoke.py
 
 Uses a temporary settings file and temporary output folders. No network, no broker.
 This checks that the pipeline runs and its artifacts are loadable and compatible with the
@@ -20,12 +20,12 @@ import pandas as pd
 import torch
 from stable_baselines3 import DQN, PPO
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from src.agents.quant_agent import QuantLSTMBrain
-from src.main import train_pipeline
+from quant_agent import QuantLSTMBrain
+from main import train_pipeline
 
 
 def _write_session_csv(path: Path, candles: int = 300) -> None:
@@ -88,6 +88,8 @@ class TrainingSmokeTest(unittest.TestCase):
                 for name in ("lstm.pt", "feature_scaler.npz", "rl_policy.zip", "run_metrics.json"):
                     self.assertTrue((out / name).exists(), name)
 
+                self.assertEqual(report["simulator_version"], 2)
+                self.assertEqual(report["timezone"], "Asia/Kolkata")
                 self.assertEqual(report["algorithm"], algorithm)
                 self.assertEqual(report["features"], list(QuantLSTMBrain.FEATURES))
                 self.assertGreater(report["evaluation"]["steps"], 0)

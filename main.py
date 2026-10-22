@@ -1,4 +1,4 @@
-"""Offline training entry point: python -m src.main --help.
+"""Offline training entry point: python main.py --help.
 
 Partitions indicators data sequentially into 60% LSTM / 20% RL / 20% Rollout Eval
 to maintain absolute zero out-of-sample data leakage boundaries.
@@ -6,6 +6,7 @@ to maintain absolute zero out-of-sample data leakage boundaries.
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import random
 from pathlib import Path
@@ -13,10 +14,10 @@ import numpy as np
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.agents.quant_agent import QuantLSTMBrain
-from src.agents.rl_brain import RLTradingBrain, TradingEnvironment
-from src.execution.risk_manager import DEFAULT_SETTINGS_PATH
-from src.utils.data_loader import load_intraday_csv, load_settings
+from quant_agent import QuantLSTMBrain
+from rl_brain import RLTradingBrain, TradingEnvironment
+from risk_manager import DEFAULT_SETTINGS_PATH
+from data_loader import load_intraday_csv, load_settings
 
 
 def train_pipeline(
@@ -39,6 +40,8 @@ def train_pipeline(
         raise FileExistsError("Choose a new output directory; existing parameters are preserved")
 
     settings = load_settings(settings_path)
+    if settings.get("execution", {}).get("mode", "simulation") != "simulation":
+        raise ValueError("Training requires simulation settings; use simulation_settings.json")
     if settings["risk_limits"].get("trading_enabled") is not True:
         raise ValueError("Use a separate simulation settings file with explicit limits and trading_enabled=true")
 
@@ -148,24 +151,18 @@ def train_pipeline(
         action, _ = rl_agent.predict(observation, deterministic=True)
         action = int(np.asarray(action).item())
         
-        if action == 1 and evaluation_env.position == 0:
-            buy_count += 1
-            total_executed_trades += 1
-        elif action == 2 and evaluation_env.position > 0:
-            sell_count += 1
-            total_executed_trades += 1
-
         observation, reward, terminated, truncated, info = evaluation_env.step(action)
         total_reward += reward
         steps += 1
-
+        buy_count += info["buy_count"]
+        sell_count += info["sell_count"]
+        forced_exit_count += info["forced_exit_count"]
+        total_executed_trades += info["total_executed_trades"]
         if terminated or truncated:
-            if evaluation_env.position > 0:
-                forced_exit_count += 1
-                total_executed_trades += 1
             break
 
     report = {
+        "simulator_version": 2, "timezone": "Asia/Kolkata",
         "seed": seed, "symbol": symbol, "algorithm": algorithm, "device": str(device),
         "target": "next_close_fractional_return", "features": list(model.FEATURES),
         "raw_candles": len(frame), "indicator_ready_candles": len(ready),
@@ -176,7 +173,11 @@ def train_pipeline(
             "steps": steps, "equity": info["equity"], "daily_pnl": info["daily_pnl"], "cash": info["cash"],
             "buy_trades": buy_count, "sell_trades": sell_count, "forced_exits": forced_exit_count,
             "total_executed_trades": total_executed_trades, "reward": total_reward, "voluntary_trades": info["trade_count"],
+            "total_charges": info["total_charges"], "charge_breakdown": info["charge_breakdown"],
+            "executions": evaluation_env.executions,
         },
+        "charge_assumptions": {"rates": asdict(evaluation_env.charges),
+                               "status": "estimate; verify current tariff and contract-note rounding"},
         "boundaries": {
             "lstm_end": ready.index[train_end - 1].isoformat(), "rl_start": ready.index[train_end].isoformat(),
             "rl_end": ready.index[rl_end - 1].isoformat(), "evaluation_start": ready.index[rl_end].isoformat(),
@@ -216,6 +217,8 @@ def main(argv=None) -> int:
     evaluation = report["evaluation"]
     print(f"Final simulated cash balance: INR {evaluation['cash']:.2f}")
     print(f"Executed trades: {evaluation['total_executed_trades']} (buys={evaluation['buy_trades']}, sells={evaluation['sell_trades']}, forced exits={evaluation['forced_exits']}, voluntary fills={evaluation['voluntary_trades']})")
+    print(f"Estimated charges: INR {evaluation['total_charges']:.2f}")
+    print("Charges are estimates; verify the current broker tariff before live use.")
     print(f"Artifacts saved to: {args.output_dir}")
     return 0
 

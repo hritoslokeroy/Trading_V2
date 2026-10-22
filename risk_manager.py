@@ -14,7 +14,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
 from threading import RLock
 
-DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parents[2] / "config" / "settings.json"
+DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 
 
 def _number(value: object, name: str, *, positive: bool = False) -> Decimal:
@@ -101,7 +101,8 @@ class RiskGatekeeper:
                 
             _number(self._limits.get("max_daily_loss_inr"), "max_daily_loss_inr", positive=True)
 
-            return val <= max_order and current_open_positions < max_pos
+            max_value = _number(self._limits.get("max_position_value_inr"), "max_position_value_inr", positive=True)
+            return val <= min(max_order, max_value) and current_open_positions < max_pos
 
     def check_daily_loss(self, current_mtm: object) -> bool:
         """Halt all trading instantly if Mark-to-Market losses violate the boundary."""
