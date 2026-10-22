@@ -173,11 +173,39 @@ class TradingEnvironment(gym.Env):
         if self.position:
             self._execute('SELL', price * (1 - self.slippage), info, forced=True, reason=reason)
 
-    def step(self, action):
+    @property
+    def done(self):
+        return self._done
+
+    def append_candles(self, candles):
+        """Append new completed bars to a streaming episode without resetting money."""
+        if self._done:
+            raise RuntimeError('Cannot append to a halted episode')
+        incoming = candles.copy()
+        if 'timestamp' in incoming:
+            incoming = incoming.set_index('timestamp')
+        current = self.df.set_index('timestamp')
+        self.df = self._validate(pd.concat([current, incoming]))
+
+    def finish(self, reason='paper_session_finished'):
+        """Close simulated exposure at the last known close; no broker operations."""
+        info = self._info()
+        if not self._done:
+            self._exit(float(self.df.iloc[self.current_step].close), info, reason)
+            self._done = True
+        final = self._info()
+        for key in ('equity', 'daily_pnl', 'cash', 'trade_count', 'total_charges', 'charge_breakdown'):
+            info[key] = final[key]
+        info['reason'] = reason
+        return info
+
+    def step(self, action, *, end_of_data=True):
         if self._done:
             raise RuntimeError('Call reset before stepping a finished episode')
         if isinstance(action, (bool, np.bool_)) or not self.action_space.contains(action):
             raise ValueError('action must be 0 (Hold), 1 (Buy), or 2 (Sell)')
+        if self.current_step + 1 >= len(self.df):
+            raise ValueError('Wait for the next completed candle before stepping')
         initial_equity = self._equity(float(self.df.iloc[self.current_step].close))
         info = self._info()
         penalty = 0.0
@@ -234,7 +262,7 @@ class TradingEnvironment(gym.Env):
                     self._exit(float(row.close), info, 'daily_loss')
                     self._done = True
                     info['reason'] = 'risk_cutoff_breach'
-                if self.current_step == len(self.df) - 1:
+                if end_of_data and self.current_step == len(self.df) - 1:
                     # End of data is a close auction estimate, not a second fill at its open.
                     self._exit(float(row.close), info, 'end_of_data')
                     self._done = True

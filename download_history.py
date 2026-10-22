@@ -76,6 +76,7 @@ def fetch_history(client, symbol: str, start: date, end: date, *, pause: float =
             start_time=f"{cursor:%Y-%m-%d} 09:15:00",
             end_time=f"{stop:%Y-%m-%d} 15:30:00",
             candle_interval=interval,
+            timeout=15,
         )
         candles = response.get("candles") or []
         print(f"{cursor} -> {stop}: {len(candles)} candles")
@@ -120,16 +121,13 @@ def main(argv=None) -> int:
     if not args.start or not args.end or args.start > args.end:
         parser.error("--start and --end are required, with start <= end")
 
-    import pyotp
-    from growwapi import GrowwAPI
-    from data_loader import load_credentials
+    from paper_market_data import PaperDataError, ReadOnlyGrowwCandles
+    try:
+        source = ReadOnlyGrowwCandles.connect(args.settings,symbol)
+        frame = source.history(args.start,args.end)
+    except PaperDataError as exc:
+        parser.exit(2,str(exc)+'\n')
 
-    credentials = load_credentials(args.settings, required=("api_key", "totp_secret"))
-    totp = pyotp.TOTP(credentials.totp_secret, digits=6).now()
-    token = GrowwAPI.get_access_token(api_key=credentials.api_key, totp=totp)
-    client = GrowwAPI(token)
-
-    frame = fetch_history(client, symbol, args.start, args.end)
     out.parent.mkdir(parents=True, exist_ok=True)
     frame.assign(timestamp=pd.to_datetime(frame["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S")).to_csv(
         out, index=False

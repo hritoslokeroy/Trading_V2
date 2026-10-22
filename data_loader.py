@@ -92,6 +92,18 @@ def load_intraday_csv(
     column_map: Mapping[str, str] | None = None,
 ) -> pd.DataFrame:
     """Return sorted OHLCV candles with rolling indicators, safe from lookahead leaks."""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Intraday data sheet not found at: {p}")
+    return prepare_intraday_frame(pd.read_csv(p), timezone=timezone,
+                                  rsi_period=rsi_period, column_map=column_map)
+
+
+def prepare_intraday_frame(
+    frame: pd.DataFrame, *, timezone: str = "Asia/Kolkata", rsi_period: int = 14,
+    column_map: Mapping[str, str] | None = None,
+) -> pd.DataFrame:
+    """Validate detached OHLCV data and compute the same indicators as CSV loading."""
     if isinstance(rsi_period, bool) or not isinstance(rsi_period, int) or rsi_period < 1:
         raise ValueError("rsi_period must be a positive integer")
     try:
@@ -99,11 +111,9 @@ def load_intraday_csv(
     except ZoneInfoNotFoundError:
         raise ValueError(f"Invalid timezone configuration: {timezone}")
         
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Intraday data sheet not found at: {p}")
-        
-    frame = pd.read_csv(p)
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError("frame must be a pandas DataFrame")
+    frame = frame.copy(deep=True)
     frame.columns = frame.columns.str.strip().str.lower()
     if column_map:
         frame = frame.rename(columns={k.strip().lower(): v.strip().lower() for k, v in column_map.items()})

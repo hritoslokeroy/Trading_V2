@@ -1,0 +1,53 @@
+{
+  "groww": {
+    "api_key_env": "GROWW_API_KEY",
+    "api_secret_env": "GROWW_API_SECRET",
+    "access_token_env": "GROWW_ACCESS_TOKEN",
+    "totp_secret_env": "GROWW_TOTP_SECRET"
+  },
+  "risk_limits": {
+    "trading_enabled": true,
+    "max_order_value_inr": 5000,
+    "max_position_value_inr": 5000,
+    "max_daily_loss_inr": 500,
+    "max_open_positions": 1,
+    "mandatory_stop_loss_pct": 1.0,
+    "mandatory_trailing_sl": false,
+    "hard_cutoff_time": "15:15"
+  },
+  "data": {
+    "timezone": "Asia/Kolkata",
+    "rsi_period": 14,
+    "supported_symbols": [
+      "RELIANCE"
+    ],
+    "candle_interval_minutes": 1
+  },
+  "charges": {
+    "profile": "Groww NSE cash intraday indicative estimate",
+    "rates_verified": false,
+    "notes": "Brokerage is rounded per executed order. Other charge heads and GST are aggregated per session and rounded to paise. STT and stamp duty are not forced to whole rupees. Estimates must be reconciled against actual contract notes; verify current rates. No subscription, auto-square-off, delivery DP charges or income tax included.",
+    "rates": {
+      "brokerage_rate": 0.001,
+      "brokerage_min_inr": 5,
+      "brokerage_max_inr": 20,
+      "small_order_brokerage_cap_rate": 0.025,
+      "stt_sell_rate": 0.00025,
+      "stamp_buy_rate": 3e-05,
+      "exchange_rate": 2.97e-05,
+      "sebi_rate": 1e-06,
+      "ipft_rate": 1e-06,
+      "gst_rate": 0.18
+    },
+    "aggregation": "session",
+    "rounding": "paise_half_up_per_component"
+  },
+  "execution": {
+    "mode": "paper"
+  },
+  "paper": {
+    "initial_cash_inr": 100000,
+    "poll_interval_seconds": 10,
+    "max_candle_delay_seconds": 180
+  }
+}

@@ -33,6 +33,12 @@ PPO and DQN training, checkpoint reloading, financial accounting, tariff
 arithmetic, stop and loss limits, gap fills, Kolkata cutoff times, order counts,
 and simulated live fault recovery. They place no live orders.
 
+## Paper trading before real money
+
+See [PAPER_TRADING.md](PAPER_TRADING.md) for the Windows workflow: train, replay
+with virtual money, practice on read-only Groww candles, and review before a
+separate manual real-money launch. Paper mode never switches to real trading.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently
@@ -156,8 +162,8 @@ flag records the operator's rate review; it does not verify prices automatically
 Never pass simulation settings to a live session.
 
 Credential mappings refer to `GROWW_API_KEY`, `GROWW_TOTP_SECRET`,
-`GROWW_API_SECRET`, and `GROWW_ACCESS_TOKEN`. The current TOTP authentication path
-requires the first two. Supply credentials securely through your environment;
+`GROWW_API_SECRET`, and `GROWW_ACCESS_TOKEN`. Authentication accepts an existing access token, an API key with a TOTP seed,
+or an API key with an API secret, in that priority order. Supply credentials securely through your environment;
 keep them out of source control and logs. No real credentials are needed for tests.
 The default settings file resolves beside the module, regardless of the shell's
 working directory. Explicit paths are recommended for experiments.

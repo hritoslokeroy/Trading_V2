@@ -403,28 +403,29 @@ class LiveGrowwExecutionAdapter:
         )
 
     async def authenticate(self):
-        """Official TOTP exchange followed by GrowwAPI(token)."""
+        """Configured token, TOTP exchange or API-secret exchange, without logging secrets."""
         if self._auth_date == self._now().date() and self.client is not None:
             return
 
         try:
             self._journal("authentication_start")
 
-            credentials = load_credentials(
-                self.settings_path,
-                required=("api_key", "totp_secret"),
-            )
-            pin = pyotp.TOTP(
-                credentials.totp_secret,
-                digits=6,
-            ).at(self._now().timestamp())
-
-            token = await self._call(
-                "authentication",
-                self.token_provider,
-                api_key=credentials.api_key,
-                totp=pin,
-            )
+            credentials = load_credentials(self.settings_path, required=())
+            if credentials.access_token:
+                token = credentials.access_token
+            elif credentials.api_key and credentials.totp_secret:
+                pin = pyotp.TOTP(credentials.totp_secret, digits=6).at(self._now().timestamp())
+                token = await self._call(
+                    "authentication", self.token_provider,
+                    api_key=credentials.api_key, totp=pin,
+                )
+            elif credentials.api_key and credentials.api_secret:
+                token = await self._call(
+                    "authentication", self.token_provider,
+                    api_key=credentials.api_key, secret=credentials.api_secret,
+                )
+            else:
+                raise ValueError("Missing configured Groww credentials")
             if not isinstance(token, str) or not token.strip():
                 raise ValueError("Invalid token response")
 

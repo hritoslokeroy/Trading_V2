@@ -6,3 +6,4 @@ __pycache__/
 artifacts/
 data/
 *.jsonl
+*.local.json
