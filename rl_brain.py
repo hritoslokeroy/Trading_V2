@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from gymnasium import spaces
 from stable_baselines3 import PPO, DQN
-from charges import IntradayCharges
+from charges import IntradayCharges, IntradayChargeLedger
 from risk_manager import DEFAULT_SETTINGS_PATH, RiskGatekeeper
 
 
@@ -114,6 +114,7 @@ class TradingEnvironment(gym.Env):
         self.entry_price = 0.0
         self.trade_count = 0
         self.daily_pnl = 0.0
+        self.charge_ledger = IntradayChargeLedger(self.charges)
         self.total_charges = 0.0
         self.charge_breakdown = {}
         self.executions = []
@@ -134,16 +135,20 @@ class TradingEnvironment(gym.Env):
     def _fees(self, value, side):
         if self.fee_rate is not None:
             return {'legacy_fee': value * self.fee_rate, 'total': value * self.fee_rate}
-        return self.charges.estimate(value, side)
+        return self.charge_ledger.quote(value, side)
 
     def _execute(self, side, price, info, *, forced=False, reason=None):
         value = price * self.lot_size
-        fees = self._fees(value, side)
+        fees = (self._fees(value, side) if self.fee_rate is not None
+                else self.charge_ledger.record(value, side))
         self.cash += (value if side == 'SELL' else -value) - fees['total']
-        self.total_charges += fees['total']
-        for key, amount in fees.items():
-            if key != 'total':
-                self.charge_breakdown[key] = self.charge_breakdown.get(key, 0.0) + amount
+        if self.fee_rate is None:
+            summary = self.charge_ledger.summary()
+            self.total_charges = summary['total']
+            self.charge_breakdown = {k: v for k, v in summary.items() if k != 'total'}
+        else:
+            self.total_charges += fees['total']
+            self.charge_breakdown['legacy_fee'] = self.total_charges
         self.position = 1 if side == 'BUY' else 0
         self.entry_price = price if self.position else 0.0
         if not forced:

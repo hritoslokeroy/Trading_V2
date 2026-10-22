@@ -68,7 +68,7 @@ No test or short training run establishes strategy profitability.
 
 ## Charges for NSE cash intraday
 
-`charges.py` estimates each executed order's costs. Both settings files expose
+`charges.py` estimates NSE cash intraday costs using a session charge ledger. Both settings files expose
 the rate assumptions in `charges.rates`; rates in JSON are **fractions of turnover**.
 These are indicative defaults, not independently verified current tariffs.
 Access to Groww's pricing pages was denied by the cloud network policy during
@@ -86,12 +86,58 @@ your contract notes before using them for real-money decisions.
 | IPFT assumption | 0.0001% on both sides; confirm current treatment |
 | GST | 18% on brokerage + exchange + SEBI + IPFT |
 
-Each component is estimated and rounded to paise per executed order. A same-value
-₹1,000 buy and sell currently estimates **₹12.16 total charges**, excluding
-slippage. Broker contract-note aggregation and statutory rounding, including STT
-rounding, can differ. Charges are deducted from simulated cash, included in net
-P&L and used in loss checks. Rejected orders have no simulated fees. Partial fills
-and multi-fill aggregation are outside the one-share model.
+Brokerage is calculated and rounded to paise **per executed order**, with its
+own minimum/maximum and small-order cap. Other heads retain Decimal precision
+across the session; each component and GST is rounded to paise on the cumulative
+amount. GST uses the unrounded taxable components and per-order brokerage.
+Executions debit only the increase in that session bill, so their charges sum
+to the reported total. Quotes do not change the ledger, rejected orders incur
+no charges, and reset starts a new session ledger. Keep segments/sessions separate.
+
+The default is `charges.aggregation="session"` and
+`charges.rounding="paise_half_up_per_component"`. STT and stamp duty are **not**
+forced to whole rupees. This is an estimate policy consistent with paise amounts
+in the supplied statement, not a claim that its exact underlying aggregation
+rules can be inferred from the summary. Actual broker charges take precedence.
+The statement's equity brokerage below ₹5 does not on its own establish a new
+minimum: order details are needed, including small-order caps.
+
+Example calculations under the configured rates (one buy order and one sell order):
+
+| Quantity and prices | Charges | Net P&L |
+| --- | --- | --- |
+| 100 shares, ₹200 → ₹215 | ₹54.73 | ₹1,445.27 |
+| 100 shares, ₹200 → ₹185 | ₹52.10 | −₹1,552.10 |
+| 1 share, ₹1,000 → ₹1,000 | ₹12.15 | −₹12.15 |
+
+These examples exclude slippage. Calculate offline, without broker credentials:
+
+```bash
+python charges.py --quantity 100 --buy 200 --sell 215
+python charges.py --quantity 100 --buy 200 --sell 185
+```
+
+The calculator accepts quantities independently of the one-share trading model;
+it does not increase live sizing or risk limits. Do not present each fill of one
+order as a new executed order: partial-fill aggregation is outside this simulator.
+
+For actual statement reconciliation, `reconcile_statement(obligation, charges,
+net_amount)` uses signed amounts exactly as reported and returns a difference.
+It does not substitute an estimate, invent turnover from a settlement obligation,
+or interpret that obligation as trading profit/loss. The supplied equity summary
+reconciles **−₹1,220.98 − ₹9.19 = −₹1,230.17**. F&O separately reconciles
+**−₹10,700 − ₹117.43 = −₹10,817.43**; combined charges are **₹126.62** and net
+payable is **₹12,047.60**. Actual-statement arithmetic supports these columns;
+it does not add F&O tariff estimation or F&O trading to this equity program.
+IGST replaces the CGST/SGST split on the supplied statement; do not charge both.
+IPFT remains an explicit component and is included in the GST base, whether the
+broker displays it separately or folds it into another line. Avoid double counting.
+
+Charges are deducted from simulated cash, included in net P&L and used in loss
+checks. A legacy `fee_bps` override uses its original flat-fee calculation;
+normal training uses the session ledger. Retraining is recommended after changing
+rates or the charge model. The exact broker aggregation/rounding policy and current
+rates still require dated trade/order details and the applicable tariff.
 
 These NSE rates do not vary merely because the user lives in Kolkata. GST may
 be split into CGST/SGST or IGST on the actual invoice; the estimator uses the
@@ -99,8 +145,6 @@ combined rate. The model excludes income tax, delivery DP charges, API/data
 subscriptions, exchange penalties and broker auto-square-off charges. Its 15:15
 exit is strategy initiated, ahead of broker auto-square-off. Add any applicable
 subscriptions to your business cost assessment; they are not order turnover fees.
-A legacy `fee_bps` constructor override is available for controlled experiments;
-normal training uses the component estimator.
 
 ## Configuration and live execution
 

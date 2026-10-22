@@ -39,6 +39,21 @@ class SimulatorEdgeTests(unittest.TestCase):
         self.assertAlmostEqual(info['daily_pnl'], -info['total_charges'])
         self.assertEqual(info['equity'], info['cash'])
 
+    def test_session_charges_match_the_actual_execution_ledger(self):
+        e = self.env()
+        for action in (1,2,1,2,0):
+            result = e.step(action)
+        expected = e.charges.estimate_orders(
+            [(fill['price']*fill['quantity'],fill['side']) for fill in e.executions])
+        self.assertAlmostEqual(result[4]['total_charges'],expected['total'])
+        for key, value in result[4]['charge_breakdown'].items():
+            self.assertAlmostEqual(value,expected[key])
+        self.assertAlmostEqual(sum(x['charges']['total'] for x in e.executions),expected['total'])
+        self.assertAlmostEqual(e.initial_cash-e.cash,expected['total'])
+        e.reset()
+        self.assertEqual(e.total_charges,0)
+        self.assertEqual(e.charge_ledger.summary()['total'],0)
+
     def test_gap_fills_at_gap_price_instead_of_stale_stop(self):
         e = self.env(prices=[100,100,90,90,90,90])
         e.step(1)

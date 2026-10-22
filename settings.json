@@ -26,7 +26,7 @@
   "charges": {
     "profile": "Groww NSE cash intraday indicative estimate",
     "rates_verified": false,
-    "notes": "Verify current Groww pricing and contract-note rounding. Rates are fractions of turnover. No subscription, auto-square-off, delivery DP charges or income tax included.",
+    "notes": "Brokerage is rounded per executed order. Other charge heads and GST are aggregated per session and rounded to paise. STT and stamp duty are not forced to whole rupees. Estimates must be reconciled against actual contract notes; verify current rates. No subscription, auto-square-off, delivery DP charges or income tax included.",
     "rates": {
       "brokerage_rate": 0.001,
       "brokerage_min_inr": 5,
@@ -38,7 +38,9 @@
       "sebi_rate": 1e-06,
       "ipft_rate": 1e-06,
       "gst_rate": 0.18
-    }
+    },
+    "aggregation": "session",
+    "rounding": "paise_half_up_per_component"
   },
   "execution": {
     "mode": "disabled"

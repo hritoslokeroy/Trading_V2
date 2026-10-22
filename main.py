@@ -177,6 +177,7 @@ def train_pipeline(
             "executions": evaluation_env.executions,
         },
         "charge_assumptions": {"rates": asdict(evaluation_env.charges),
+                               "aggregation": "session", "rounding": "paise_half_up_per_component",
                                "status": "estimate; verify current tariff and contract-note rounding"},
         "boundaries": {
             "lstm_end": ready.index[train_end - 1].isoformat(), "rl_start": ready.index[train_end].isoformat(),
