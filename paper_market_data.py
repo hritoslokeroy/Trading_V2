@@ -24,23 +24,15 @@ class ReadOnlyGrowwCandles:
     def connect(cls, settings_path, symbol, *, client_factory=None, token_provider=None):
         try:
             from growwapi import GrowwAPI
-            import pyotp
+            from groww_auth import token_from_credentials
             credentials = load_credentials(settings_path, required=())
-            token = credentials.access_token
-            if not token:
-                provider = token_provider or GrowwAPI.get_access_token
-                if credentials.api_key and credentials.totp_secret:
-                    token = provider(api_key=credentials.api_key,
-                                     totp=pyotp.TOTP(credentials.totp_secret).now())
-                elif credentials.api_key and credentials.api_secret:
-                    token = provider(api_key=credentials.api_key, secret=credentials.api_secret)
-                else:
-                    raise ValueError('Missing configured credentials')
-            if not isinstance(token, str) or not token.strip():
-                raise ValueError('Invalid access token')
+            token = token_from_credentials(credentials, provider=token_provider)
             client = (client_factory or GrowwAPI)(token)
             return cls(client, symbol)
-        except Exception:
+        except Exception as error:
+            from groww_auth import GrowwAuthError
+            if isinstance(error, GrowwAuthError):
+                raise PaperDataError(str(error)) from None
             raise PaperDataError('Groww data authentication failed. Check the configured credential variables and API access; no secrets were logged.') from None
 
     def history(self, start, end):

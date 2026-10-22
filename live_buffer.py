@@ -309,3 +309,38 @@ class LiveCandleBuffer:
                 raise ValueError("Standardized tensor mapping value boundaries overflow system thresholds")
             state_tensor = torch.tensor(values, dtype=torch.float32, device=self.device).unsqueeze(0)
             return state_tensor
+
+
+class CompletedCandleBuffer(LiveCandleBuffer):
+    """Features from completed historical OHLCV; LTP is used only for prices.
+
+    Each poll must include this entire session so Wilder RSI/VWAP keep the same
+    seed as training. Missing, stale or revised candles stop the session.
+    """
+
+    def update_completed(self, candles, now):
+        from data_loader import prepare_intraday_frame
+        stamp = self._timestamp(now)
+        opening = stamp.normalize() + timedelta(hours=9, minutes=15)
+        expected_last = stamp.floor('min') - timedelta(minutes=1)
+        if candles.empty:
+            if expected_last >= opening:
+                raise ValueError('Completed market candles are unavailable')
+            return
+        frame = prepare_intraday_frame(candles, rsi_period=self.rsi_period)
+        if (frame.index[0] != opening or frame.index[-1] != expected_last
+                or not frame.index.is_monotonic_increasing
+                or (np.diff(frame.index.as_unit('ns').asi8) != 60_000_000_000).any()):
+            raise ValueError('Completed candles are stale, incomplete or outside this session')
+        with self._lock:
+            if not self._frame.empty:
+                old = self._frame.loc[:, ['open', 'high', 'low', 'close', 'volume']]
+                if not old.index.isin(frame.index).all() or not np.array_equal(
+                        old.to_numpy(), frame.loc[old.index, old.columns].to_numpy()):
+                    raise ValueError('Previously consumed candles changed')
+            self._frame = frame.loc[:, list(self.FEATURES)].tail(self._rows.maxlen).copy()
+            self._session = opening
+            self._watermark = expected_last + timedelta(minutes=1)
+
+    def on_tick(self, payload):
+        raise ValueError('LTP has no candle volume; use completed OHLCV')

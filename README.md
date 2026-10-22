@@ -168,12 +168,31 @@ keep them out of source control and logs. No real credentials are needed for tes
 The default settings file resolves beside the module, regardless of the shell's
 working directory. Explicit paths are recommended for experiments.
 
-Live account P&L comes from broker snapshots; estimated fees are used to reserve
-entry cash, not subtracted a second time from broker-reported P&L. Actual Groww
-response schemas, broker stop acceptance, feed behavior, and account permissions
-must still be checked independently. The decoder in `groww_env.py` is an explicit
-reference contract and fails closed on missing or unfamiliar data. Mocked tests
-do not validate a real account's schema.
+The live decoder uses documented `clear_cash`, available MIS balance,
+`brokerage_and_charges`, position `quantity`, `net_price`, and `realised_pnl`.
+Buying cash is capped by the smaller of clear cash and available MIS balance.
+Open P&L is marked with a fresh LTP; reported margin charges are deducted once
+from realized plus open P&L. Estimated fees separately reserve entry cash.
+An isolated NSE CASH MIS account is required: CNC/carry-forward positions,
+unmanaged open symbols, missing risk inputs and unknown fee signs are refused.
+Validate that margin charges cover today's session and that closed position
+rows retain today's realized P&L against the actual account before enabling live.
+The documentation examples and offline tests cannot establish those semantics.
+
+Production LTP updates carry prices/timestamps only. Model features use completed
+one-minute historical OHLCV, matching training RSI/VWAP. Missing, stale, revised,
+or gapped candles halt the session; current-day historical availability/latency
+still needs a read-only account check. NSE CASH permissions and instrument
+buy/sell/reserved flags, token, lot and unmodified tick size are checked at startup.
+Pending cancellation/modification/delivery states remain working until confirmed.
+
+Shared per-session API budgets cover documented authentication, order writes,
+quotes and account/status reads. Exceeding a budget halts without retrying an
+uncertain write or delaying reconciliation behind a minute-long queue. Budgets
+are in memory, not shared with other programs or persisted across restarts;
+broker-side limits remain authoritative. Historical quotas were not specified
+in the reviewed table and are not inferred from quote limits. Actual broker stop
+acceptance, response semantics and account access remain independently unverified.
 
 The live adapter has no automatic restart: inspect previous journals and
 reconcile broker positions and orders after any uncertain write. Live market

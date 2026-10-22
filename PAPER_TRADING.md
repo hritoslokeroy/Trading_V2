@@ -35,6 +35,31 @@ remove stale variables for an unused route. Credentials expire according to Grow
 The app does not load `.env` files automatically. Closing PowerShell clears these
 process-scoped variables. No API credentials are needed for CSV replay or training.
 
+### Check authentication before downloading
+
+For **Approval / API key and secret**, Groww documents daily approval at
+https://groww.in/trade-api/api-keys and an active Trading API subscription.
+After copying each credential command above, press Enter first, then paste the
+actual value at the hidden prompt. Do not replace the prompt text with your key.
+Once both values are set, run this read-only token check:
+
+```powershell
+.\.venv\Scripts\python.exe check_groww_auth.py --settings paper_settings.json
+```
+
+This prints only success or a safe HTTP status/error category. It never prints
+a key, secret, token, account identifier or raw server error and places no orders.
+An existing access token skips exchange and only gets a format check, not a
+validity check. Token requests have a 15-second timeout and no automatic retries.
+The downloader now uses the same bounded exchange and safe diagnostics.
+
+An HTTP 400 does not identify the cause by itself. If today's approval and
+subscription are already confirmed, check Windows **Settings → Time & Language
+→ Date & time → Sync now** and share only the safe status/category with Groww
+support if it remains unclassified. Corrected code cannot grant account access
+or guarantee that Groww will accept a token request. Do not repeatedly generate
+tokens: the documented limit is 150 per 24 hours.
+
 ## 2. Download two independent historical sessions
 
 Pick two completed NSE trading dates: one for training, a **later date** for practice.

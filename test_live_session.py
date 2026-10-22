@@ -98,6 +98,9 @@ class MockGrowwAPI:
         self.references_seen_before_submission = []
         self.timeout_on_entry = False
 
+    def get_user_profile(self, **kwargs):
+        return {"nse_enabled": True, "active_segments": ["CASH"]}
+
     def get_instrument_by_exchange_and_trading_symbol(
         self, **kwargs
     ):
@@ -108,6 +111,7 @@ class MockGrowwAPI:
             "exchange_token": "2885",
             "tick_size": "0.05",
             "lot_size": "1",
+            "buy_allowed": "1", "sell_allowed": "1", "is_reserved": "0",
         }
 
     def mark_price(self, price):
@@ -123,7 +127,9 @@ class MockGrowwAPI:
     def get_available_margin_details(self, **kwargs):
         with self._lock:
             return {
-                "available_cash": str(self.cash),
+                "clear_cash": str(self.cash),
+                "brokerage_and_charges": str(self.charges),
+                "equity_margin_details": {"mis_balance_available": str(self.cash)},
             }
 
     def get_positions_for_user(self, **kwargs):
@@ -135,13 +141,10 @@ class MockGrowwAPI:
                     "exchange": "NSE",
                     "segment": "CASH",
                     "product": "MIS",
-                    "net_quantity": self.quantity,
+                    "quantity": self.quantity,
+                    "net_carry_forward_quantity": 0,
                     "net_price": str(self.average_price),
                     "realised_pnl": str(self.realized_pnl),
-                    "unrealised_pnl": str(
-                        self.quantity
-                        * (self.price - self.average_price)
-                    ),
                 }],
             }
 
@@ -344,6 +347,10 @@ class MockGrowwFeed:
 
         self.broker.mark_price(tick["ltp"])
 
+        # This accelerated harness deliberately injects a volume-bearing
+        # synthetic transport into the legacy aggregation buffer. Production
+        # LTP does not contain volume; documented OHLCV is tested separately.
+        self._callback.__self__.buffer.on_tick(tick)
         self._callback({
             "exchange": "NSE",
             "segment": "CASH",
@@ -534,6 +541,8 @@ class TestLiveSession(
             # Three snapshots/minute represent
             # an accelerated test feed.
             max_quote_age=60.0,
+            buffer_factory=LiveCandleBuffer,
+            rate_limiter=Mock(),  # Offline accelerated clock only.
         )
 
         self.environment_patch = patch.dict(

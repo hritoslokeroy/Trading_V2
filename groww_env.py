@@ -44,7 +44,9 @@ from quant_agent import QuantLSTMBrain
 from charges import IntradayCharges
 from risk_manager import DEFAULT_SETTINGS_PATH, RiskGatekeeper
 from data_loader import load_credentials, load_settings
-from live_buffer import LiveCandleBuffer
+from live_buffer import LiveCandleBuffer, CompletedCandleBuffer
+from groww_auth import exchange_access_token
+from api_limits import GrowwRateLimiter
 
 IST = ZoneInfo("Asia/Kolkata")
 LOG = logging.getLogger(__name__)
@@ -56,6 +58,8 @@ TERMINAL = frozenset({
 WORKING = frozenset({
     "OPEN", "NEW", "ACKED", "PENDING", "TRIGGER_PENDING",
     "PARTIALLY_FILLED", "CANCEL_PENDING", "MODIFIED",
+    "APPROVED", "CANCELLATION_REQUESTED", "MODIFICATION_REQUESTED",
+    "DELIVERY_AWAITED",
 })
 
 
@@ -105,50 +109,42 @@ class AccountSnapshot:
 
 
 class GrowwResponseDecoder:
-    """Reference contract for SDK-unwrapped payload dictionaries.
+    """SDK-unwrapped CASH/MIS positions with independently supplied fresh prices.
 
-    margins: available_cash (free cash, excluding collateral).
-    positions: positions list, charges (today's account charges), with each row
-    containing trading_symbol/exchange/segment/product/net_quantity/net_price/
-    realised_pnl/unrealised_pnl. Closed rows must retain today's realized P&L.
-    Missing charges are rejected, not silently treated as zero.
-    orders: order_list; order details: order_status/filled_quantity.
-    Override these methods if the deployed API uses a different audited schema.
+    Free buying cash is bounded by both clear cash and available MIS balance;
+    collateral/leverage is never added. Margin brokerage_and_charges is deducted
+    once from P&L, not again from the broker's already reported cash balance.
+    This session requires an isolated intraday account: carry-forward/CNC rows
+    are rejected because their daily P&L cannot be inferred from net_price.
+    Verify margin charge scope against the actual account before enabling live.
     """
 
-    def account(self, margins: dict, payload: dict) -> AccountSnapshot:
-        cash = _money(margins["available_cash"], nonnegative=True)
-        daily = -_money(payload["charges"], nonnegative=True)
+    def account(self, margins: dict, payload: dict, prices=None) -> AccountSnapshot:
+        cash = min(_money(margins["clear_cash"], nonnegative=True),
+                   _money(margins["equity_margin_details"]["mis_balance_available"],
+                          nonnegative=True))
+        daily = -_money(margins["brokerage_and_charges"], nonnegative=True)
         positions = []
-
         if not isinstance(payload["positions"], list):
             raise ValueError("Invalid position list")
-
         for row in payload["positions"]:
-            quantity = _integer(row["net_quantity"])
+            identity = [row[key] for key in
+                        ("trading_symbol", "exchange", "segment", "product")]
+            if any(not isinstance(value, str) or not value for value in identity):
+                raise ValueError("Invalid position identity")
+            if identity[1:] != ["NSE", "CASH", "MIS"]:
+                raise ValueError("Only isolated NSE CASH MIS positions are supported")
+            if _integer(row["net_carry_forward_quantity"]) != 0:
+                raise ValueError("Carry-forward positions require independent reconciliation")
+            quantity = _integer(row["quantity"])
             realized = _money(row["realised_pnl"])
-            unrealized = _money(row["unrealised_pnl"])
-            daily += realized + unrealized
-
+            unrealized = Decimal(0)
             if quantity:
-                identity = [
-                    row[key]
-                    for key in (
-                        "trading_symbol", "exchange", "segment", "product"
-                    )
-                ]
-                if any(not isinstance(value, str) or not value for value in identity):
-                    raise ValueError("Invalid position identity")
-
-                positions.append(
-                    Position(
-                        *identity,
-                        quantity,
-                        _money(row["net_price"], positive=True),
-                        unrealized,
-                    )
-                )
-
+                average = _money(row["net_price"], positive=True)
+                price = _money(prices[tuple(identity)], positive=True)
+                unrealized = quantity * (price - average)
+                positions.append(Position(*identity, quantity, average, unrealized))
+            daily += realized + unrealized
         return AccountSnapshot(cash, daily, tuple(positions))
 
     def orders(self, payload: dict) -> list[dict]:
@@ -211,7 +207,7 @@ class LiveGrowwExecutionAdapter:
         tick_size: str | Decimal,
         request_timeout: float = 3.0,
         confirmation_timeout: float = 5.0,
-        poll_interval: float = 0.05,
+        poll_interval: float = 0.2,
         account_interval: float = 1.0,
         max_quote_age: float = 3.0,
         entry_slippage_bps: float = 5.0,
@@ -223,7 +219,8 @@ class LiveGrowwExecutionAdapter:
         feed_factory=None,
         lstm=None,
         policy=None,
-        buffer_factory=LiveCandleBuffer,
+        buffer_factory=CompletedCandleBuffer,
+        rate_limiter=None,
         auto_flatten_on_halt=False,
     ):
         self.artifact_dir = Path(artifact_dir)
@@ -264,12 +261,14 @@ class LiveGrowwExecutionAdapter:
             raise ValueError("Entry slippage bound must be below 100%")
 
         self.decoder = decoder or GrowwResponseDecoder()
+        self.rate_limiter = rate_limiter or GrowwRateLimiter()
         self.clock = clock or (lambda: datetime.now(IST))
         self.alert = alert or self._default_alert
         self.client_factory = client_factory or (
             lambda token: _BoundedGrowwAPI(token, self.request_timeout)
         )
-        self.token_provider = token_provider or GrowwAPI.get_access_token
+        self.token_provider = token_provider or (
+            lambda **kwargs: exchange_access_token(timeout=self.request_timeout, **kwargs))
         self.feed_factory = feed_factory or GrowwFeed
         self.buffer_factory = buffer_factory
 
@@ -381,6 +380,7 @@ class LiveGrowwExecutionAdapter:
             raise ExecutionHalted("Circuit is open; requests are blocked")
 
         try:
+            self.rate_limiter.check(name)
             return await asyncio.wait_for(
                 asyncio.to_thread(function, *args, **kwargs),
                 self.request_timeout,
@@ -486,6 +486,22 @@ class LiveGrowwExecutionAdapter:
                 "Policy must accept four observations and three actions"
             )
 
+    @staticmethod
+    def _instrument_flag(value):
+        if isinstance(value, bool):
+            return value
+        number = _integer(value, nonnegative=True)
+        if number not in (0, 1):
+            raise ValueError("Invalid instrument permission flag")
+        return bool(number)
+
+    async def _verify_profile(self):
+        profile = await self._rpc("get_user_profile")
+        if (profile["nse_enabled"] is not True
+                or not isinstance(profile["active_segments"], list)
+                or "CASH" not in profile["active_segments"]):
+            raise ValueError("NSE CASH trading is not enabled for this account")
+
     async def _verify_instrument(self):
         row = await self._call(
             "instrument_lookup",
@@ -504,6 +520,9 @@ class LiveGrowwExecutionAdapter:
             identity != ("NSE", "CASH", self._symbol, self._instrument)
             or _money(row["tick_size"], positive=True) != self.tick_size
             or _integer(row["lot_size"], nonnegative=True) != 1
+            or not self._instrument_flag(row["buy_allowed"])
+            or not self._instrument_flag(row["sell_allowed"])
+            or self._instrument_flag(row["is_reserved"])
         ):
             raise ValueError(
                 "Instrument token, symbol, tick size, or lot size does not match"
@@ -517,7 +536,15 @@ class LiveGrowwExecutionAdapter:
         )
 
         try:
-            account = self.decoder.account(margins, positions)
+            prices = {}
+            for row in positions["positions"]:
+                if _integer(row["quantity"]):
+                    identity = tuple(row[key] for key in
+                                     ("trading_symbol", "exchange", "segment", "product"))
+                    if identity != (self._symbol, "NSE", "CASH", "MIS"):
+                        raise ValueError("Unmanaged account exposure")
+                    prices[identity] = self._fresh_price()
+            account = self.decoder.account(margins, positions, prices)
             if not isinstance(account, AccountSnapshot):
                 raise ValueError("Decoder must return AccountSnapshot")
 
@@ -812,7 +839,6 @@ class LiveGrowwExecutionAdapter:
                 return
 
             tick = self.feed.get_ltp()["NSE"]["CASH"][self._instrument]
-            self.buffer.on_tick(tick)
 
             stamp = pd.to_datetime(
                 tick["tsInMillis"],
@@ -1090,7 +1116,8 @@ class LiveGrowwExecutionAdapter:
 
                 key = now.replace(second=0, microsecond=0)
                 if key != minute:
-                    self.buffer.flush_completed(now)
+                    if not isinstance(self.buffer, CompletedCandleBuffer):
+                        self.buffer.flush_completed(now)
                     self._minute_event.set()
                     minute = key
 
@@ -1210,6 +1237,7 @@ class LiveGrowwExecutionAdapter:
 
             self._journal("session_start", symbol=symbol)
             await self.authenticate()
+            await self._verify_profile()
             await self._verify_instrument()
 
             while self._now().time() < clock_time(9, 15):
@@ -1350,8 +1378,12 @@ class LiveGrowwExecutionAdapter:
                 ):
                     self._fresh_price()
 
-                # The feed may finalize a bar before the clock timer.
                 if new_minute and not self._entries_blocked:
+                    if isinstance(self.buffer, CompletedCandleBuffer):
+                        from paper_market_data import ReadOnlyGrowwCandles
+                        source = ReadOnlyGrowwCandles(self.client, self._symbol)
+                        candles = await self._call("historical_candles", source.fetch, now)
+                        self.buffer.update_completed(candles, now)
                     await self._on_candle(account)
 
                 await asyncio.sleep(self.poll_interval)
