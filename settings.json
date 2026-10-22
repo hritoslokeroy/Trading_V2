@@ -1,0 +1,24 @@
+{
+  "groww": {
+    "api_key_env": "HARNESS_GROWW_API_KEY",
+    "api_secret_env": "HARNESS_GROWW_API_SECRET",
+    "access_token_env": "HARNESS_GROWW_ACCESS_TOKEN",
+    "totp_secret_env": "HARNESS_GROWW_TOTP_SECRET"
+  },
+  "risk_limits": {
+    "trading_enabled": true,
+    "max_order_value_inr": 1000,
+    "max_position_value_inr": 1000,
+    "max_daily_loss_inr": 500,
+    "max_open_positions": 1,
+    "mandatory_stop_loss_pct": 1.0,
+    "mandatory_trailing_sl": false,
+    "hard_cutoff_time": "15:15"
+  },
+  "data": {
+    "timezone": "Asia/Kolkata",
+    "rsi_period": 14,
+    "supported_symbols": ["RELIANCE"],
+    "candle_interval_minutes": 1
+  }
+}
