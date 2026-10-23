@@ -44,6 +44,7 @@ class LeveragedAccountingTests(unittest.TestCase):
                 'initial_cash_inr':25000,'leverage':5,'position_sizing':'max_notional'})
             self.assertEqual(config['risk_limits']['max_order_value_inr'],85000)
             self.assertEqual(config['risk_limits']['max_position_value_inr'],85000)
+            self.assertEqual(config['risk_limits']['max_daily_loss_inr'],1000)
         live=json.loads(Path(__file__).with_name('settings.json').read_text())
         self.assertEqual(live['execution']['mode'],'disabled')
         self.assertFalse(live['risk_limits']['trading_enabled'])
@@ -115,6 +116,7 @@ class LeveragedAccountingTests(unittest.TestCase):
         self.assertEqual(env.margin_reserved,0)
 
     def test_daily_loss_trigger_scales_with_quantity_and_closes_early(self):
+        self.config['risk_limits']['max_daily_loss_inr']=500
         env=self.env()
         env.step(1,end_of_data=False)
         env.df.loc[2,'low']=198

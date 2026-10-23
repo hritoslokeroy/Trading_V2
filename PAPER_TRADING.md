@@ -14,9 +14,10 @@ exit value can exceed the entry cap; exits are never blocked by that cap.
 The simulator assumes this leverage for every configured stock; it does not
 verify Groww eligibility, financing costs or actual broker margin requirements.
 
-The configured **1% price stop**, **₹500 daily net-loss threshold**, and **15:15
+The configured **1% price stop**, **₹1,000 daily net-loss threshold**, and **15:15
 IST cutoff** still apply. On ₹85,000 exposure, a 1% move is ₹850 before charges,
-so the ₹500 control can exit sooner. Gaps/slippage/exit fees can exceed either
+so the price stop normally comes first on a fresh position; accumulated daily
+losses can make the ₹1,000 control trigger sooner. Gaps/slippage/exit fees can exceed either
 threshold. These defaults are in `paper_settings.json` and matched in
 `simulation_settings.json`. Paper mode never reads your real balance or holdings.
 

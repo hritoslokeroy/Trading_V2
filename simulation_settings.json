@@ -9,7 +9,7 @@
     "trading_enabled": true,
     "max_order_value_inr": 85000,
     "max_position_value_inr": 85000,
-    "max_daily_loss_inr": 500,
+    "max_daily_loss_inr": 1000,
     "max_open_positions": 1,
     "mandatory_stop_loss_pct": 1.0,
     "mandatory_trailing_sl": false,
