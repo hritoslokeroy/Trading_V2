@@ -150,6 +150,11 @@ An all-Hold result can still occur; forcing Buy actions is not a solution.
 Repeatedly examining/tuning on the same practice day makes it development data;
 reserve later unseen sessions for a final independent assessment.
 
+For the next training stage, use [MULTI_SESSION_TRAINING.md](MULTI_SESSION_TRAINING.md).
+It adds correctly scaled forecast targets, per-day windows and later validation,
+policy-learning and evaluation groups. It does not require working Groww access
+when public/local CSV data is available.
+
 ## 4. Practice on current Groww market data
 
 During an NSE weekday session, with credentials set locally:

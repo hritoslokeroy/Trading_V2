@@ -22,6 +22,7 @@ from data_loader import load_intraday_csv, load_settings, prepare_intraday_frame
 from paper_market_data import PaperDataError, ReadOnlyGrowwCandles
 from quant_agent import QuantLSTMBrain
 from rl_brain import TradingEnvironment
+from multi_session import forecast_divisor
 
 IST = ZoneInfo('Asia/Kolkata')
 DEFAULT_PAPER_SETTINGS = Path(__file__).with_name('paper_settings.json')
@@ -72,6 +73,7 @@ class FrozenPolicy:
                 or meta.get('target') != 'next_close_fractional_return'
                 or meta.get('algorithm') not in ('PPO','DQN')):
             raise ValueError('Model metadata is incompatible; train a matching model first')
+        self.forecast_divisor = forecast_divisor(meta)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.lstm = QuantLSTMBrain().to(self.device).eval()
         self.lstm.load_state_dict(torch.load(root/'lstm.pt', weights_only=True, map_location=self.device))
@@ -101,7 +103,7 @@ class FrozenPolicy:
             for end in range(length-1, len(ready)):
                 inputs = torch.as_tensor(values[end-length+1:end+1], dtype=torch.float32,
                                          device=self.device).unsqueeze(0)
-                score = float(self.lstm(inputs).item())
+                score = float(self.lstm(inputs).item()) / self.forecast_divisor
                 if not math.isfinite(score):
                     raise ValueError('Nonfinite LSTM paper score')
                 scores.append(score)

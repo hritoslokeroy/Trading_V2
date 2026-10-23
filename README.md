@@ -42,6 +42,14 @@ See [PAPER_TRADING.md](PAPER_TRADING.md) for the Windows workflow: train, replay
 with virtual money, practice on read-only Groww candles, and review before a
 separate manual real-money launch. Paper mode never switches to real trading.
 
+## Multiple-session forecast validation
+
+See [MULTI_SESSION_TRAINING.md](MULTI_SESSION_TRAINING.md) for the recommended
+next workflow: recent public or local CSV data, day-isolated basis-point forecast
+training, validation against zero/mean baselines, separate policy-training days,
+and later evaluation. A failed forecast gate stops before PPO training.
+`main.py` below remains the original single-session diagnostic entry point.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently
@@ -98,9 +106,9 @@ history; their summed changes must not be read as a portfolio return.
 
 No reward is added for making a trade. Costs, overtrading penalties and risk
 limits stay active. An all-Hold evaluation is explicitly reported; more actions
-or lower training error alone do not establish improvement. The trainer still
-accepts one continuous session; longer training repeats that history. Broader
-multi-session training requires a separate extension and untouched test sessions.
+or lower training error alone do not establish improvement. The original `main.py` diagnostic still accepts one continuous session.
+The new `train_multisession.py` path supports separate chronological session
+groups; use untouched later data for final strategy assessment.
 
 ## Charges for NSE cash intraday
 
