@@ -73,11 +73,34 @@ bar closes remaining positions at its close. Minute bars cannot establish exact
 tick fills or guarantee that a loss will stay within a limit during a gap.
 
 **Retrain for this profile.** Leveraged whole-share sizing uses simulator version
-3; paper runs reject mismatched leverage/sizing profiles. Existing one-share
-version-2 models require retraining for the new defaults. The live adapter stays
+4; paper runs reject mismatched sizing and observation profiles. Both the old
+one-share version-2 models and unnormalized leveraged version-3 models require
+retraining for the new defaults. The live adapter stays
 one-share/version-2 PPO only and refuses these leveraged models and reports.
 DQN remains available for offline training and paper trading.
 No test or short training run establishes strategy profitability.
+
+### Policy inputs and diagnostics
+
+Simulator version 4 keeps the four-input policy interface but changes units to
+`[predicted_return * 100, free_cash / initial_capital, position_count,
+open_pnl / initial_capital]`. These fixed scales are applied identically during
+training and paper inference; no practice/evaluation data fit the normalization.
+The separate market-feature scaler still uses only the LSTM training partition.
+Risk controls and accounting continue using actual INR amounts and quantities.
+
+`run_metrics.json` records training action counts, fills, rejected entries,
+episode counts and reward penalties, plus deterministic evaluation action counts.
+Forecast diagnostics compare next-close return MSE against a zero-return forecast
+for each partition, excluding targets outside that partition. Training MSE is
+not validation accuracy. Repeated training episodes are not additional market
+history; their summed changes must not be read as a portfolio return.
+
+No reward is added for making a trade. Costs, overtrading penalties and risk
+limits stay active. An all-Hold evaluation is explicitly reported; more actions
+or lower training error alone do not establish improvement. The trainer still
+accepts one continuous session; longer training repeats that history. Broader
+multi-session training requires a separate extension and untouched test sessions.
 
 ## Charges for NSE cash intraday
 

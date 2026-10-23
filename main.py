@@ -16,6 +16,7 @@ from sklearn.preprocessing import StandardScaler
 
 from quant_agent import QuantLSTMBrain
 from rl_brain import RLTradingBrain, TradingEnvironment
+from training_diagnostics import TrainingDiagnostics, forecast_metrics
 from risk_manager import DEFAULT_SETTINGS_PATH
 from data_loader import load_intraday_csv, load_settings
 
@@ -136,7 +137,8 @@ def train_pipeline(
 
     brain = RLTradingBrain(training_env, algorithm=algorithm, seed=seed, device=str(device), model_kwargs=model_kwargs)
     rl_agent = brain.model
-    rl_agent.learn(total_timesteps=rl_timesteps)
+    diagnostics = TrainingDiagnostics()
+    rl_agent.learn(total_timesteps=rl_timesteps, callback=diagnostics)
 
     observation, info = evaluation_env.reset(seed=seed)
     total_reward = 0.0
@@ -146,13 +148,17 @@ def train_pipeline(
     sell_count = 0
     forced_exit_count = 0
     total_executed_trades = 0
+    action_counts = {'hold':0, 'buy':0, 'sell':0}
+    rejected_entries = 0
 
     while True:
         action, _ = rl_agent.predict(observation, deterministic=True)
         action = int(np.asarray(action).item())
+        action_counts[('hold','buy','sell')[action]] += 1
         
         observation, reward, terminated, truncated, info = evaluation_env.step(action)
         total_reward += reward
+        rejected_entries += int(info['order_rejected'])
         steps += 1
         buy_count += info["buy_count"]
         sell_count += info["sell_count"]
@@ -168,9 +174,17 @@ def train_pipeline(
         "target": "next_close_fractional_return", "features": list(model.FEATURES),
         "raw_candles": len(frame), "indicator_ready_candles": len(ready),
         "split_counts": {"lstm": train_end, "rl": rl_end - train_end, "evaluation": len(ready) - rl_end},
+        "training_diagnostics": diagnostics.summary(),
+        "training_parameters": model_kwargs,
+        "forecast_diagnostics": {
+            "lstm_training_window": forecast_metrics(ready.iloc[:train_end]),
+            "rl_window": forecast_metrics(ready.iloc[train_end:rl_end]),
+            "evaluation_window": forecast_metrics(ready.iloc[rl_end:]),
+        },
         "supervised_samples": len(x), "lstm_train_mse": supervised_mse, "lstm_scored_rows": len(scores),
         "sequence_length": sequence_length, "rl_requested_timesteps": rl_timesteps, "rl_actual_timesteps": rl_agent.num_timesteps,
         "evaluation": {
+            "action_counts": action_counts, "rejected_entries": rejected_entries,
             "steps": steps, "equity": info["equity"], "daily_pnl": info["daily_pnl"], "cash": info["cash"],
             "buy_trades": buy_count, "sell_trades": sell_count, "forced_exits": forced_exit_count,
             "total_executed_trades": total_executed_trades, "reward": total_reward, "voluntary_trades": info["trade_count"],
@@ -221,6 +235,10 @@ def main(argv=None) -> int:
     print(f"Executed trades: {evaluation['total_executed_trades']} (buys={evaluation['buy_trades']}, sells={evaluation['sell_trades']}, forced exits={evaluation['forced_exits']}, voluntary fills={evaluation['voluntary_trades']})")
     print(f"Estimated charges: INR {evaluation['total_charges']:.2f}")
     print("Charges are estimates; verify the current broker tariff before live use.")
+    print("Training actions:", report['training_diagnostics']['action_counts'])
+    print("Evaluation actions:", evaluation['action_counts'])
+    if evaluation['buy_trades'] == 0:
+        print("No evaluation buys: this model has not demonstrated entry/exit performance.")
     print(f"Artifacts saved to: {args.output_dir}")
     return 0
 

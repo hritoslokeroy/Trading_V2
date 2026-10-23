@@ -107,8 +107,9 @@ not change the disabled real-money settings or their separate ₹1,000 caps.
 .\.venv\Scripts\python.exe paper_trade.py --csv data/practice.csv --model-dir artifacts/model-01 --symbol RELIANCE --output-dir artifacts/paper-replay-01
 ```
 
-Leveraged sizing uses simulator version 3 and requires a newly trained model.
-Old one-share models are refused for this profile. A version-3 leveraged model
+Normalized leveraged sizing uses simulator version 4 and requires a newly
+trained model. Both old one-share models and version-3 leveraged models are
+refused for this profile. A version-4 leveraged model
 and its paper report cannot activate the current one-share live adapter.
 Use PPO for these initial experiments. DQN works for offline
 training and paper trading, but the real-money adapter currently accepts only compatible version-2 PPO models.
@@ -129,6 +130,25 @@ Each paper folder contains:
 performance test. Zero trades do not demonstrate entry/exit performance. Costs and
 slippage can make a flat-price strategy lose money. Each run begins a new virtual
 session; carry forward virtual funds explicitly with `--cash` if desired.
+
+### Investigating an all-Hold policy
+
+After updating to simulator version 4, use new folders for a controlled diagnostic
+run on the existing CSVs. The settings and rewards stay the same; policy-input
+normalization is now fixed. This is still short-session training, not evidence
+of general performance:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --csv data/train.csv --settings simulation_settings.json --output-dir artifacts/model-leverage-02 --symbol RELIANCE --algorithm PPO --lstm-epochs 10 --rl-timesteps 2048
+.\.venv\Scripts\python.exe paper_trade.py --csv data/practice.csv --model-dir artifacts/model-leverage-02 --symbol RELIANCE --output-dir artifacts/paper-leverage-02
+```
+
+Inspect `training_diagnostics`, `forecast_diagnostics` and evaluation
+`action_counts` in the model's `run_metrics.json`, and `action_counts`, fills,
+net P&L and drawdown in `paper_report.json`. Keep model-01 for comparison.
+An all-Hold result can still occur; forcing Buy actions is not a solution.
+Repeatedly examining/tuning on the same practice day makes it development data;
+reserve later unseen sessions for a final independent assessment.
 
 ## 4. Practice on current Groww market data
 

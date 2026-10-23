@@ -67,7 +67,7 @@ class FrozenPolicy:
         self.fingerprint = artifact_fingerprint(root)
         self.metadata = json.loads((root/'run_metrics.json').read_text())
         meta = self.metadata
-        if (meta.get('simulator_version') not in (2, 3) or meta.get('symbol') != symbol
+        if (meta.get('simulator_version') not in (2, 4) or meta.get('symbol') != symbol
                 or meta.get('features') != list(QuantLSTMBrain.FEATURES)
                 or meta.get('target') != 'next_close_fractional_return'
                 or meta.get('algorithm') not in ('PPO','DQN')):
@@ -142,10 +142,10 @@ class PaperRun:
                                          initial_cash=self.cash)
         profile = environment.execution_profile()
         trained_profile = self.model.metadata.get('execution_profile', {})
-        if environment.simulator_version == 3 or self.model.metadata.get('simulator_version') == 3:
+        if environment.simulator_version == 4 or self.model.metadata.get('simulator_version') == 4:
             if (self.model.metadata.get('simulator_version') != environment.simulator_version
                     or any(trained_profile.get(key) != profile[key] for key in
-                           ('position_sizing','leverage','max_order_value_inr','max_position_value_inr'))):
+                           ('position_sizing','leverage','max_order_value_inr','max_position_value_inr','observation_schema'))):
                 raise ValueError('Model sizing/leverage profile differs; retrain with matching simulation settings')
         self.env = environment
         self.observation, _ = self.env.reset()
@@ -198,6 +198,8 @@ class PaperRun:
                 'equity_inr':info['equity'], 'net_pnl_inr':info['daily_pnl'],
                 'estimated_charges_inr':info['total_charges'], 'charge_breakdown':info['charge_breakdown'],
                 'max_drawdown_inr':self.max_drawdown, 'decisions':len(self.decisions),
+                'action_counts':{name:sum(d['action']==action for d in self.decisions)
+                                 for action,name in enumerate(('hold','buy','sell'))},
                 'rejected_entries':self.rejections, 'executed_orders':len(fills),
                 'forced_exits':sum(int(f['forced']) for f in fills),
                 'overlaps_training':None if overlap is None else bool(overlap),

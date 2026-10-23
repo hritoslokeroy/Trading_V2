@@ -50,6 +50,21 @@ class LeveragedAccountingTests(unittest.TestCase):
         self.assertFalse(live['risk_limits']['trading_enabled'])
         self.assertEqual(live['risk_limits']['max_order_value_inr'],1000)
 
+    def test_normalized_inputs_preserve_signal_and_actual_position_pnl(self):
+        env=self.env([200,200,201,201,201,201])
+        env.df['lstm_score']=.001
+        np.testing.assert_allclose(env._get_obs(),[.1,1,0,0],rtol=1e-6)
+        env.step(1,end_of_data=False)
+        observation,_,_,_,_=env.step(0,end_of_data=False)
+        self.assertAlmostEqual(float(observation[1]),env.cash/25000,places=6)
+        self.assertEqual(observation[2],1)
+        self.assertAlmostEqual(float(observation[3]),425/25000,places=6)
+        env.df.loc[env.current_step,'lstm_score']=.002
+        changed=env._get_obs()
+        self.assertAlmostEqual(float(changed[0]),.2,places=6)
+        np.testing.assert_array_equal(changed[1:],observation[1:])
+        self.assertEqual(env.observation_schema,'account_fractions_return_percent_v1')
+
     def test_max_notional_whole_shares_and_margin_reservation(self):
         env=self.env()
         _,_,_,_,info=env.step(1,end_of_data=False)
@@ -185,9 +200,19 @@ class LeveragedModelTests(unittest.TestCase):
             with patch('requests.sessions.Session.request',side_effect=AssertionError('No HTTP')):
                 metrics=train_pipeline(csv,settings,model_dir,symbol='RELIANCE',
                     lstm_epochs=1,rl_timesteps=64,seed=3)
-                self.assertEqual(metrics['simulator_version'],3)
+                self.assertEqual(metrics['simulator_version'],4)
                 self.assertEqual(metrics['execution_profile']['initial_cash_inr'],25000)
                 self.assertEqual(metrics['execution_profile']['leverage'],5)
+                self.assertEqual(metrics['execution_profile']['observation_schema'],
+                                 'account_fractions_return_percent_v1')
+                diagnostics=metrics['training_diagnostics']
+                self.assertEqual(diagnostics['steps'],metrics['rl_actual_timesteps'])
+                self.assertEqual(sum(diagnostics['action_counts'].values()),diagnostics['steps'])
+                self.assertEqual(sum(metrics['evaluation']['action_counts'].values()),
+                                 metrics['evaluation']['steps'])
+                self.assertGreater(metrics['forecast_diagnostics']['evaluation_window']['samples'],0)
+                self.assertEqual(metrics['forecast_diagnostics']['lstm_training_window']['samples'],
+                                 metrics['supervised_samples'])
                 model=FrozenPolicy(model_dir,'RELIANCE')
                 model.action=Mock(side_effect=[1,2]+[0]*400)
                 config['execution']['mode']='paper'
@@ -199,8 +224,9 @@ class LeveragedModelTests(unittest.TestCase):
                 run=PaperRun(model,paper,root/'report','RELIANCE')
                 report=run.replay(frame)
                 self.assertEqual(report['initial_cash_inr'],25000)
-                self.assertEqual(report['simulator_version'],3)
+                self.assertEqual(report['simulator_version'],4)
                 self.assertGreater(report['max_executed_quantity'],1)
+                self.assertEqual(sum(report['action_counts'].values()),report['decisions'])
                 self.assertFalse(report['uses_real_money'])
                 self.assertFalse(report['overlaps_training'])
                 with self.assertRaisesRegex(ValueError,'one-share live adapter'):
