@@ -67,7 +67,7 @@ class FrozenPolicy:
         self.fingerprint = artifact_fingerprint(root)
         self.metadata = json.loads((root/'run_metrics.json').read_text())
         meta = self.metadata
-        if (meta.get('simulator_version') != 2 or meta.get('symbol') != symbol
+        if (meta.get('simulator_version') not in (2, 3) or meta.get('symbol') != symbol
                 or meta.get('features') != list(QuantLSTMBrain.FEATURES)
                 or meta.get('target') != 'next_close_fractional_return'
                 or meta.get('algorithm') not in ('PPO','DQN')):
@@ -138,8 +138,16 @@ class PaperRun:
         self.last_info = {}
 
     def initialize(self, scored, *, start_latest=False):
-        self.env = TradingEnvironment(scored, symbol=self.symbol, settings_path=self.settings_path,
-                                      initial_cash=self.cash)
+        environment = TradingEnvironment(scored, symbol=self.symbol, settings_path=self.settings_path,
+                                         initial_cash=self.cash)
+        profile = environment.execution_profile()
+        trained_profile = self.model.metadata.get('execution_profile', {})
+        if environment.simulator_version == 3 or self.model.metadata.get('simulator_version') == 3:
+            if (self.model.metadata.get('simulator_version') != environment.simulator_version
+                    or any(trained_profile.get(key) != profile[key] for key in
+                           ('position_sizing','leverage','max_order_value_inr','max_position_value_inr'))):
+                raise ValueError('Model sizing/leverage profile differs; retrain with matching simulation settings')
+        self.env = environment
         self.observation, _ = self.env.reset()
         if start_latest:
             self.env.current_step = len(self.env.df)-1
@@ -152,7 +160,10 @@ class PaperRun:
         self.max_drawdown = max(self.max_drawdown, self.peak-info['equity'])
         stamp = self.env.df.iloc[self.env.current_step].timestamp.isoformat()
         self.curve.append({'timestamp':stamp, 'equity':info['equity'], 'cash':info['cash'],
-                           'net_pnl':info['daily_pnl'], 'charges':info['total_charges']})
+                           'net_pnl':info['daily_pnl'], 'charges':info['total_charges'],
+                           'quantity':info.get('quantity',0),
+                           'margin_reserved_inr':info.get('margin_reserved_inr',0),
+                           'position_value_inr':info.get('position_value_inr',0)})
 
     def advance(self, *, streaming=False):
         action = self.model.action(self.observation)
@@ -176,7 +187,12 @@ class PaperRun:
         return {'mode':'paper', 'uses_real_money':False, 'learning_during_session':False,
                 'model_fingerprint':getattr(self.model,'fingerprint',None),
                 'algorithm':self.model.metadata.get('algorithm'),
-                'source':self.source, 'status':self.status, 'symbol':self.symbol, 'quantity':1,
+                'source':self.source, 'status':self.status, 'symbol':self.symbol,
+                'simulator_version':self.env.simulator_version if self.env else None,
+                'execution_profile':self.env.execution_profile() if self.env else None,
+                'position_sizing':self.settings.get('simulation',{}).get('position_sizing','one_share'),
+                'quantity':self.env.quantity if self.env else 0,
+                'max_executed_quantity':max((fill['quantity'] for fill in fills),default=0),
                 'practice_started_at':self.started_at.isoformat() if self.started_at is not None else None,
                 'timezone':'Asia/Kolkata', 'initial_cash_inr':self.cash, 'final_cash_inr':info['cash'],
                 'equity_inr':info['equity'], 'net_pnl_inr':info['daily_pnl'],

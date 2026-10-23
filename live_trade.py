@@ -22,6 +22,9 @@ def verify_paper_report(report_path, model_dir, symbol):
             or report['decisions'] < 1 or isinstance(report.get('executed_orders'),bool)
             or not isinstance(report.get('executed_orders'),int) or report['executed_orders'] < 1):
         raise ValueError('Paper practice must include decisions and simulated executions')
+    if (report.get('simulator_version', 2) != 2
+            or report.get('position_sizing', 'one_share') != 'one_share'):
+        raise ValueError('Leveraged variable-share paper models cannot activate the one-share live adapter')
     if report.get('overlaps_training') is not False:
         raise ValueError('Use a paper session after the model training period before live activation')
     # A local report is an operator review aid, not independent proof of profitability.

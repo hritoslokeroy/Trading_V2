@@ -1,9 +1,24 @@
 # Practice with virtual money first
 
-Paper trading uses **₹1,00,000 virtual cash**, **one share per position**, an INR
-5,000 paper order/position cap, the configured 1% stop, estimated Groww charges,
-and a ₹500 daily simulated loss limit. These are in `paper_settings.json`.
-Your real account balance and holdings are never used by paper mode.
+Paper trading starts with **₹25,000 virtual equity**, **5× simulated intraday
+leverage**, and an **₹85,000 maximum entry notional** for one open long position.
+It sizes whole shares to the smaller of that cap and available margin buying
+power, reserving entry fees separately. At an executed price of ₹200, the cap
+allows 425 shares: ₹85,000 exposure reserves ₹17,000 initial margin. Actual
+slippage can reduce the quantity. The remaining capital is not invested.
+
+P&L changes by price movement times actual shares, not by an additional 5×
+multiplier. Charges apply to full buy/sell turnover. Margin is released on exit;
+losses and charges reduce subsequent buying power. An appreciated position's
+exit value can exceed the entry cap; exits are never blocked by that cap.
+The simulator assumes this leverage for every configured stock; it does not
+verify Groww eligibility, financing costs or actual broker margin requirements.
+
+The configured **1% price stop**, **₹500 daily net-loss threshold**, and **15:15
+IST cutoff** still apply. On ₹85,000 exposure, a 1% move is ₹850 before charges,
+so the ₹500 control can exit sooner. Gaps/slippage/exit fees can exceed either
+threshold. These defaults are in `paper_settings.json` and matched in
+`simulation_settings.json`. Paper mode never reads your real balance or holdings.
 
 The workflow is: download market data → train on a past session → practice on a
 later session → review results → choose separately whether to start real trading.
@@ -82,8 +97,8 @@ connection was tested in the cloud. If you already have matching CSVs, skip down
 
 Training still uses `simulation_settings.json`. Review its symbol/order caps for
 your dataset before training: orders above a cap are rejected rather than enlarged.
-Default simulation and paper order/position caps are both ₹5,000. Keep those
-fake-money limits consistent when comparing training with practice. This does
+Default training and paper capital is ₹25,000 with 5× leverage and an ₹85,000
+entry cap. Keep those fake-money profiles consistent when comparing results. This does
 not change the disabled real-money settings or their separate ₹1,000 caps.
 
 ```powershell
@@ -91,16 +106,21 @@ not change the disabled real-money settings or their separate ₹1,000 caps.
 .\.venv\Scripts\python.exe paper_trade.py --csv data/practice.csv --model-dir artifacts/model-01 --symbol RELIANCE --output-dir artifacts/paper-replay-01
 ```
 
-Use PPO if you intend to use the current live adapter later. DQN works for offline
-training and paper trading, but the real-money adapter currently accepts PPO only.
+Leveraged sizing uses simulator version 3 and requires a newly trained model.
+Old one-share models are refused for this profile. A version-3 leveraged model
+and its paper report cannot activate the current one-share live adapter.
+Use PPO for these initial experiments. DQN works for offline
+training and paper trading, but the real-money adapter currently accepts only compatible version-2 PPO models.
 Use a new output folder for each run; existing results are never overwritten.
-To choose different **virtual** starting funds, add `--cash 25000`.
+To explicitly override the **virtual** starting funds, add e.g. `--cash 10000`.
+The default is already ₹25,000; smaller balances may reduce the share quantity.
 
 Each paper folder contains:
 
 - `paper_report.json`: virtual cash/equity, net P&L after fees, estimated charges,
   drawdown, decision/fill counts, training overlap and model fingerprint.
-- `executions.json`: simulated buys/sells, forced exits and cost components.
+- `executions.json`: simulated buys/sells with actual whole-share quantities,
+  full notionals, forced exits and cost components.
 - `decisions.json`: model proposals and rejected entries.
 - `equity_curve.csv`: virtual equity and P&L over time.
 

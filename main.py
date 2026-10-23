@@ -162,7 +162,8 @@ def train_pipeline(
             break
 
     report = {
-        "simulator_version": 2, "timezone": "Asia/Kolkata",
+        "simulator_version": training_env.simulator_version,
+        "execution_profile": training_env.execution_profile(), "timezone": "Asia/Kolkata",
         "seed": seed, "symbol": symbol, "algorithm": algorithm, "device": str(device),
         "target": "next_close_fractional_return", "features": list(model.FEATURES),
         "raw_candles": len(frame), "indicator_ready_candles": len(ready),

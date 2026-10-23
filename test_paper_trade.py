@@ -34,6 +34,11 @@ class PaperTests(unittest.TestCase):
         frame.to_csv(cls.csv,index=False)
         cls.features = load_intraday_csv(cls.csv)
         cls.config = json.loads(Path(__file__).with_name('paper_settings.json').read_text())
+        # Preserve one-share regression coverage independently of shipped defaults.
+        cls.config.pop('simulation', None)
+        cls.config['paper']['initial_cash_inr'] = 100000
+        cls.config['risk_limits']['max_order_value_inr'] = 5000
+        cls.config['risk_limits']['max_position_value_inr'] = 5000
         train = copy.deepcopy(cls.config)
         train['execution']['mode'] = 'simulation'
         cls.train_settings = cls.root/'simulation.json'

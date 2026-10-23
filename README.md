@@ -1,11 +1,14 @@
 # NSE intraday trading research
 
-Offline LSTM + PPO/DQN training and an opt-in Groww execution adapter for one
-fully funded long share of one NSE cash instrument. Amounts are INR. Exchange
+Offline LSTM + PPO/DQN training and fake-money trading for one NSE cash
+instrument, plus a separately disabled, one-share Groww live adapter. Amounts are INR. Exchange
 clocks use **Asia/Kolkata (IST, UTC+05:30)**, including on UTC cloud machines.
 The simulator accepts contiguous weekday one-minute candles from 09:15 to
 15:29 and prevents entries at or after the configured **15:15 IST** cutoff.
-It does not implement F&O, shorts, delivery, margin leverage, a holiday calendar,
+Paper/training defaults: ₹25,000 virtual capital, 5× simulated leverage, whole
+shares sized up to ₹85,000 entry notional. Real trading defaults stay disabled
+and do not inherit this leverage or sizing. It does not implement F&O, shorts,
+delivery, real broker leverage, a holiday calendar,
 or trailing stops.
 
 ## Install and test
@@ -59,7 +62,9 @@ partition only. It exports `lstm.pt`, `feature_scaler.npz`, `rl_policy.zip`, and
 charge components, rate assumptions and an execution ledger. Reward is net equity
 change / initial capital, less the documented turnover and risk penalties.
 
-Equity is cash plus the owned share's market value. Buy checks reserve fees and
+Equity is free cash plus reserved initial margin plus open P&L. Fake-money buys
+reserve notional/leverage plus entry fees; exits release margin and realize
+price movement times actual quantity. Fees use full traded notional. Buy checks
 enforce cash, order and position-value limits. Stops handle opening gaps at the
 open and intrabar breaches at the protective trigger, with adverse slippage.
 The daily-loss trigger uses net mark-to-market including costs already charged;
@@ -67,9 +72,11 @@ after liquidation all returned balances and counters are refreshed. The final
 bar closes remaining positions at its close. Minute bars cannot establish exact
 tick fills or guarantee that a loss will stay within a limit during a gap.
 
-**Retrain old checkpoints.** Simulator version 2 fixes the earlier accounting
-and risk behavior; the live loader rejects checkpoints without that version.
-The live adapter accepts PPO only; DQN remains an offline training option.
+**Retrain for this profile.** Leveraged whole-share sizing uses simulator version
+3; paper runs reject mismatched leverage/sizing profiles. Existing one-share
+version-2 models require retraining for the new defaults. The live adapter stays
+one-share/version-2 PPO only and refuses these leveraged models and reports.
+DQN remains available for offline training and paper trading.
 No test or short training run establishes strategy profitability.
 
 ## Charges for NSE cash intraday
@@ -123,7 +130,7 @@ python charges.py --quantity 100 --buy 200 --sell 215
 python charges.py --quantity 100 --buy 200 --sell 185
 ```
 
-The calculator accepts quantities independently of the one-share trading model;
+The calculator accepts quantities independently of the trading model;
 it does not increase live sizing or risk limits. Do not present each fill of one
 order as a new executed order: partial-fill aggregation is outside this simulator.
 
