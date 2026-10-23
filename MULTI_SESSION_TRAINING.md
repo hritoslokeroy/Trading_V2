@@ -48,6 +48,10 @@ as consecutive one-minute bars. Yahoo and Groww prices/volumes may differ.
 Dates already examined during earlier experiments are development data, not an
 untouched final test. Reserve later, unexamined sessions for final assessment.
 
+For ongoing collection instead of repeatedly downloading the same short window,
+use [DATA_COLLECTION.md](DATA_COLLECTION.md). Its archive accumulates new completed
+days across downloads and reports the usable-session count.
+
 ## Validate forecasts, then train a policy
 
 ```powershell

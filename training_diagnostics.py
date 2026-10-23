@@ -8,7 +8,7 @@ class TrainingDiagnostics(BaseCallback):
         super().__init__()
         self.action_counts = dict.fromkeys(('hold','buy','sell'),0)
         self.steps = self.episodes = self.rejected_entries = 0
-        self.buys = self.sells = self.forced_exits = 0
+        self.buys = self.sells = self.forced_exits = self.sells_while_flat = 0
         self.equity_change = self.penalties = 0.0
 
     def _on_step(self):
@@ -20,6 +20,7 @@ class TrainingDiagnostics(BaseCallback):
             self.buys += info.get('buy_count',0)
             self.sells += info.get('sell_count',0)
             self.forced_exits += info.get('forced_exit_count',0)
+            self.sells_while_flat += int(info.get('sell_while_flat',False))
             self.equity_change += info.get('equity_change_inr',0)
             self.penalties += info.get('reward_penalty',0)
         self.episodes += int(np.asarray(self.locals['dones']).sum())
@@ -29,7 +30,8 @@ class TrainingDiagnostics(BaseCallback):
         return {'steps':self.steps, 'completed_episodes':self.episodes,
                 'action_counts':self.action_counts.copy(),
                 'buy_executions':self.buys, 'sell_executions':self.sells,
-                'forced_exits':self.forced_exits, 'rejected_entries':self.rejected_entries,
+                'forced_exits':self.forced_exits, 'sell_while_flat':self.sells_while_flat,
+                'rejected_entries':self.rejected_entries,
                 'summed_equity_changes_inr':self.equity_change,
                 'summed_reward_penalties':self.penalties,
                 'note':'Training revisits the same session. Summed changes are not a portfolio return.'}

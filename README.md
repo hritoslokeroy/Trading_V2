@@ -50,6 +50,10 @@ training, validation against zero/mean baselines, separate policy-training days,
 and later evaluation. A failed forecast gate stops before PPO training.
 `main.py` below remains the original single-session diagnostic entry point.
 
+If recent-history experiments produce no trades or no useful edge, follow
+[DATA_COLLECTION.md](DATA_COLLECTION.md) to accumulate immutable completed-day
+snapshots before another experiment. Repeated training is not additional history.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently

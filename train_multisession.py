@@ -87,7 +87,7 @@ def evaluate_sessions(policy, sessions, symbol, settings_path, initial_cash):
     peak, drawdown = cash, 0.0
     daily = []
     actions = dict.fromkeys(('hold','buy','sell'),0)
-    orders = buys = sells = forced = rejects = 0
+    orders = buys = sells = forced = rejects = sells_while_flat = 0
     fees = reward_sum = 0.0
     executions = []
     for session in sessions:
@@ -104,6 +104,7 @@ def evaluate_sessions(policy, sessions, symbol, settings_path, initial_cash):
             reward_sum += reward
             buys += info['buy_count']; sells += info['sell_count']
             forced += info['forced_exit_count']; rejects += int(info['order_rejected'])
+            sells_while_flat += int(info.get('sell_while_flat',False))
             peak = max(peak, info['equity'])
             drawdown = max(drawdown, peak-info['equity'])
             if done or truncated:
@@ -121,7 +122,8 @@ def evaluate_sessions(policy, sessions, symbol, settings_path, initial_cash):
             'net_pnl_inr':cash-initial_cash, 'total_charges':fees,
             'max_drawdown_inr':drawdown, 'action_counts':actions,
             'buy_trades':buys, 'sell_trades':sells, 'forced_exits':forced,
-            'rejected_entries':rejects, 'total_executed_trades':orders,
+            'rejected_entries':rejects, 'sell_while_flat':sells_while_flat,
+            'total_executed_trades':orders,
             'steps':sum(actions.values()), 'reward':reward_sum,
             'sessions_evaluated':len(daily), 'sessions_available':len(sessions),
             'daily_results':daily, 'executions':executions,

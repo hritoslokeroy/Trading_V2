@@ -173,7 +173,8 @@ class PaperRun:
         self.observation, _, done, _, info = self.env.step(action, end_of_data=not streaming)
         self.last_info = info
         self.decisions.append({'candle_timestamp':decision_time,'action':action,
-                               'rejected':info['order_rejected']})
+                               'rejected':info['order_rejected'],
+                               'sell_while_flat':bool(info.get('sell_while_flat',False))})
         self.rejections += int(info['order_rejected'])
         self._point(info)
         return done
@@ -202,6 +203,7 @@ class PaperRun:
                 'max_drawdown_inr':self.max_drawdown, 'decisions':len(self.decisions),
                 'action_counts':{name:sum(d['action']==action for d in self.decisions)
                                  for action,name in enumerate(('hold','buy','sell'))},
+                'sell_while_flat':sum(int(d.get('sell_while_flat',False)) for d in self.decisions),
                 'rejected_entries':self.rejections, 'executed_orders':len(fills),
                 'forced_exits':sum(int(f['forced']) for f in fills),
                 'overlaps_training':None if overlap is None else bool(overlap),

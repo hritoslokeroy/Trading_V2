@@ -219,7 +219,7 @@ class TradingEnvironment(gym.Env):
     def _info(self):
         equity = self._equity(float(self.df.iloc[self.current_step].close))
         self.daily_pnl = equity - self.initial_cash
-        return {'risk_violations': 0, 'order_rejected': False, 'equity': equity,
+        return {'risk_violations': 0, 'order_rejected': False, 'sell_while_flat': False, 'equity': equity,
                 'daily_pnl': self.daily_pnl, 'cash': self.cash,
                 'quantity': self.quantity, 'margin_reserved_inr': self.margin_reserved,
                 'position_value_inr': self.quantity * float(self.df.iloc[self.current_step].close),
@@ -268,6 +268,7 @@ class TradingEnvironment(gym.Env):
             raise ValueError('Wait for the next completed candle before stepping')
         initial_equity = self._equity(float(self.df.iloc[self.current_step].close))
         info = self._info()
+        info['sell_while_flat'] = bool(action == 2 and not self.position)
         penalty = 0.0
         now = self.df.iloc[self.current_step].timestamp
         # At a known close, act on the risk state immediately, without advancing time.

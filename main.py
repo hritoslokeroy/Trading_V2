@@ -149,7 +149,7 @@ def train_pipeline(
     forced_exit_count = 0
     total_executed_trades = 0
     action_counts = {'hold':0, 'buy':0, 'sell':0}
-    rejected_entries = 0
+    rejected_entries = sells_while_flat = 0
 
     while True:
         action, _ = rl_agent.predict(observation, deterministic=True)
@@ -159,6 +159,7 @@ def train_pipeline(
         observation, reward, terminated, truncated, info = evaluation_env.step(action)
         total_reward += reward
         rejected_entries += int(info['order_rejected'])
+        sells_while_flat += int(info.get('sell_while_flat',False))
         steps += 1
         buy_count += info["buy_count"]
         sell_count += info["sell_count"]
@@ -185,6 +186,7 @@ def train_pipeline(
         "sequence_length": sequence_length, "rl_requested_timesteps": rl_timesteps, "rl_actual_timesteps": rl_agent.num_timesteps,
         "evaluation": {
             "action_counts": action_counts, "rejected_entries": rejected_entries,
+            "sell_while_flat": sells_while_flat,
             "steps": steps, "equity": info["equity"], "daily_pnl": info["daily_pnl"], "cash": info["cash"],
             "buy_trades": buy_count, "sell_trades": sell_count, "forced_exits": forced_exit_count,
             "total_executed_trades": total_executed_trades, "reward": total_reward, "voluntary_trades": info["trade_count"],
