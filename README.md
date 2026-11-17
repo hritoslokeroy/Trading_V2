@@ -59,6 +59,11 @@ For the input-distribution issue found in the uploaded development CSV, see
 relative forecast inputs using nested chronological folds without training PPO
 or opening later evaluation/practice files.
 
+For the next research hypothesis, [HORIZON_RESEARCH.md](HORIZON_RESEARCH.md) tests
+fixed 1/5/15-minute holding horizons with a simple baseline and full-cost,
+non-overlapping simulator replay. This produces research reports only; it does
+not train PPO or enable live trading.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently
