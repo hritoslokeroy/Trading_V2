@@ -16,6 +16,7 @@ from multi_session import (TRANSFORM, SessionEnvironment, SessionWindows,
 from quant_agent import QuantLSTMBrain
 from rl_brain import RLTradingBrain, TradingEnvironment
 from training_diagnostics import TrainingDiagnostics
+from market_context import schema_diagnostics
 
 
 def prediction_metrics(model, dataset, device, train_mean):
@@ -154,9 +155,11 @@ def train_multisession(csv_path, settings_path, output_dir, *, symbol,
     # Validate risk configuration before any model work.
     probe = TradingEnvironment(groups['fit'][0].assign(lstm_score=0),
                                symbol=symbol, settings_path=settings_path)
-    if probe.simulator_version != 4:
+    if probe.simulator_version not in (4,5):
         raise ValueError('Use the normalized fake-money execution profile')
     profile = probe.execution_profile()
+    simulator_version = probe.simulator_version
+    observation_names = list(probe.observation_names)
     probe.close()
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -166,7 +169,7 @@ def train_multisession(csv_path, settings_path, output_dir, *, symbol,
     output.mkdir(parents=True, exist_ok=False)
     torch.save({key:value.detach().cpu() for key,value in model.state_dict().items()},output/'lstm.pt')
     np.savez(output/'feature_scaler.npz',mean=scaler.mean_,scale=scaler.scale_)
-    report = {'training_pipeline':'multi_session_v1', 'simulator_version':4,
+    report = {'training_pipeline':'multi_session_v1', 'simulator_version':simulator_version, 'policy_observation_names':observation_names,
         'execution_profile':profile, 'forecast_transform':TRANSFORM.copy(),
         'feature_transform':{'name':feature_set}, 'forecast_features':list(feature_names(feature_set)),
         'mode':'simulation','uses_real_money':False, 'symbol':symbol,'algorithm':algorithm,
@@ -187,6 +190,9 @@ def train_multisession(csv_path, settings_path, output_dir, *, symbol,
         return report
     scored = {name:[score_session(model,day,scaler,device,feature_set) for day in days]
               for name,days in groups.items() if name in ('rl','evaluation')}
+    if simulator_version == 5:
+        report['policy_input_diagnostics'] = schema_diagnostics(scored['rl'])
+        print('Independent policy market inputs:',report['policy_input_diagnostics'],flush=True)
     environment = SessionEnvironment(scored['rl'],symbol,settings_path)
     kwargs = ({'n_steps':32,'batch_size':16,'n_epochs':2} if algorithm == 'PPO' else
               {'learning_starts':min(100,rl_timesteps//4),'buffer_size':max(1000,rl_timesteps),

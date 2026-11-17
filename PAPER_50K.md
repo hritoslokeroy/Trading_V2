@@ -70,3 +70,10 @@ More shares do not make a weak model profitable. A zero-trade, losing or
 validation-bypassed result remains research evidence only. These leveraged
 version-4 artifacts cannot activate the current one-share live adapter. No
 Groww credentials or connection are required for the CSV workflow.
+
+## Independent market-state follow-up
+
+The newer [MARKET_CONTEXT_PAPER.md](MARKET_CONTEXT_PAPER.md) uses separately named
+version-5 settings with 13 observations, so PPO sees market information even when
+the auxiliary LSTM forecast is zero. This original 50k/version-4 preset remains
+available to reproduce earlier runs; do not reuse its checkpoint in version 5.

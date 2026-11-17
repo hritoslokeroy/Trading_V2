@@ -24,6 +24,7 @@ from quant_agent import QuantLSTMBrain
 from rl_brain import TradingEnvironment
 from multi_session import forecast_divisor
 from forecast_features import feature_set_from_metadata, prepare_features, feature_matrix
+from market_context import prepare_market_context, OBSERVATION_NAMES as MARKET_OBSERVATIONS, SCHEMA as MARKET_SCHEMA
 
 IST = ZoneInfo('Asia/Kolkata')
 DEFAULT_PAPER_SETTINGS = Path(__file__).with_name('paper_settings.json')
@@ -69,11 +70,17 @@ class FrozenPolicy:
         self.fingerprint = artifact_fingerprint(root)
         self.metadata = json.loads((root/'run_metrics.json').read_text())
         meta = self.metadata
-        if (meta.get('simulator_version') not in (2, 4) or meta.get('symbol') != symbol
+        if (meta.get('simulator_version') not in (2, 4, 5) or meta.get('symbol') != symbol
                 or meta.get('features') != list(QuantLSTMBrain.FEATURES)
                 or meta.get('target') != 'next_close_fractional_return'
                 or meta.get('algorithm') not in ('PPO','DQN')):
             raise ValueError('Model metadata is incompatible; train a matching model first')
+        self.policy_observation_names = (MARKET_OBSERVATIONS if meta['simulator_version']==5 else
+                                         ('lstm_score','cash','position_count','open_mtm'))
+        if meta['simulator_version']==5 and (
+                meta.get('policy_observation_names') != list(MARKET_OBSERVATIONS)
+                or meta.get('execution_profile',{}).get('observation_schema') != MARKET_SCHEMA):
+            raise ValueError('Market policy observation schema is missing or incompatible; retrain')
         self.forecast_divisor = forecast_divisor(meta)
         self.feature_set = feature_set_from_metadata(meta)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -81,8 +88,8 @@ class FrozenPolicy:
         self.lstm.load_state_dict(torch.load(root/'lstm.pt', weights_only=True, map_location=self.device))
         loader = PPO if meta['algorithm'] == 'PPO' else DQN
         self.policy = loader.load(root/'rl_policy.zip', device=self.device)
-        if self.policy.observation_space.shape != (4,) or self.policy.action_space.n != 3:
-            raise ValueError('Policy needs four observations and three actions')
+        if self.policy.observation_space.shape != (len(self.policy_observation_names),) or self.policy.action_space.n != 3:
+            raise ValueError('Policy checkpoint observation dimension does not match its saved schema')
         with np.load(root/'feature_scaler.npz', allow_pickle=False) as scaler:
             self.mean, self.scale = scaler['mean'].copy(), scaler['scale'].copy()
         if (self.mean.shape != (7,) or self.scale.shape != (7,)
@@ -92,6 +99,8 @@ class FrozenPolicy:
 
     def score(self, features):
         prepared = prepare_features(features,self.feature_set)
+        if self.metadata.get('simulator_version') == 5:
+            prepared = prepare_market_context(prepared)
         ready = prepared.dropna(subset=list(QuantLSTMBrain.FEATURES)).copy()
         length = QuantLSTMBrain.SEQUENCE_LENGTH
         if len(ready) < length:
@@ -147,7 +156,7 @@ class PaperRun:
                                          initial_cash=self.cash)
         profile = environment.execution_profile()
         trained_profile = self.model.metadata.get('execution_profile', {})
-        if environment.simulator_version == 4 or self.model.metadata.get('simulator_version') == 4:
+        if environment.simulator_version in (4,5) or self.model.metadata.get('simulator_version') in (4,5):
             if (self.model.metadata.get('simulator_version') != environment.simulator_version
                     or any(trained_profile.get(key) != profile[key] for key in
                            ('position_sizing','leverage','max_order_value_inr','max_position_value_inr','observation_schema'))):
@@ -200,6 +209,7 @@ class PaperRun:
                 'algorithm':self.model.metadata.get('algorithm'),
                 'source':self.source, 'status':self.status, 'symbol':self.symbol,
                 'simulator_version':self.env.simulator_version if self.env else None,
+                'policy_observation_names':list(self.env.observation_names) if self.env else None,
                 'execution_profile':self.env.execution_profile() if self.env else None,
                 'position_sizing':self.settings.get('simulation',{}).get('position_sizing','one_share'),
                 'quantity':self.env.quantity if self.env else 0,

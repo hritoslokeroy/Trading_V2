@@ -8,6 +8,7 @@ from data_loader import prepare_intraday_frame
 from quant_agent import QuantLSTMBrain
 from rl_brain import TradingEnvironment
 from forecast_features import RAW, feature_matrix, prepare_features
+from market_context import enabled as market_context_enabled, prepare_market_context
 
 TRANSFORM = {'output_units': 'basis_points', 'divide_by': 10000}
 
@@ -39,6 +40,8 @@ def load_sessions(csv_path, settings, feature_set=RAW):
         frame = prepare_intraday_frame(raw.loc[stamps.date == day],
             rsi_period=settings.get('data', {}).get('rsi_period', 14))
         frame = prepare_features(frame, feature_set)
+        if market_context_enabled(settings):
+            frame = prepare_market_context(frame)
         # Indicators reset separately each day; overnight prices never seed RSI.
         ready = frame.dropna(subset=list(QuantLSTMBrain.FEATURES))
         if len(ready) < 120:

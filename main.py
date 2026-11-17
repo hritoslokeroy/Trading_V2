@@ -17,6 +17,7 @@ from sklearn.preprocessing import StandardScaler
 from quant_agent import QuantLSTMBrain
 from rl_brain import RLTradingBrain, TradingEnvironment
 from training_diagnostics import TrainingDiagnostics, forecast_metrics
+from market_context import enabled as market_context_enabled, prepare_market_context
 from risk_manager import DEFAULT_SETTINGS_PATH
 from data_loader import load_intraday_csv, load_settings
 
@@ -50,6 +51,8 @@ def train_pipeline(
     frame = load_intraday_csv(csv_path, timezone=data_config.get("timezone", "Asia/Kolkata"),
                               rsi_period=data_config.get("rsi_period", 14))
 
+    if market_context_enabled(settings):
+        frame = prepare_market_context(frame)
     ready = frame.dropna(subset=list(QuantLSTMBrain.FEATURES)).copy()
     if len(ready) < 120:
         raise ValueError("At least 120 indicator-ready candles are required")
@@ -170,6 +173,7 @@ def train_pipeline(
 
     report = {
         "simulator_version": training_env.simulator_version,
+        "policy_observation_names": list(training_env.observation_names),
         "execution_profile": training_env.execution_profile(), "timezone": "Asia/Kolkata",
         "seed": seed, "symbol": symbol, "algorithm": algorithm, "device": str(device),
         "target": "next_close_fractional_return", "features": list(model.FEATURES),

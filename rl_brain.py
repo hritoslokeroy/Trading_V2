@@ -15,6 +15,7 @@ from gymnasium import spaces
 from stable_baselines3 import PPO, DQN
 from charges import IntradayCharges, IntradayChargeLedger
 from risk_manager import DEFAULT_SETTINGS_PATH, RiskGatekeeper
+from market_context import enabled as market_context_enabled, market_matrix, OBSERVATION_NAMES as MARKET_OBSERVATIONS, SCHEMA as MARKET_SCHEMA
 
 
 def _finite(value, name: str, *, positive: bool = False) -> float:
@@ -55,7 +56,10 @@ class TradingEnvironment(gym.Env):
         if self.position_sizing not in ('one_share', 'max_notional') or not 1 <= self.leverage <= 5:
             raise ValueError('Use one_share/max_notional sizing and leverage between 1 and 5')
         self.simulator_version = 4 if self.leverage != 1 or self.position_sizing != 'one_share' else 2
-        if self.simulator_version == 4 and self.settings.get('execution', {}).get('mode') not in ('paper', 'simulation'):
+        if market_context_enabled(self.settings):
+            self.simulator_version = 5
+        self.observation_names = MARKET_OBSERVATIONS if self.simulator_version == 5 else self.OBSERVATION_NAMES
+        if self.simulator_version in (4,5) and self.settings.get('execution', {}).get('mode') not in ('paper', 'simulation'):
             raise ValueError('Leveraged/variable sizing is restricted to fake-money modes')
         balance = simulation.get('initial_cash_inr', 100000) if initial_cash is None else initial_cash
         self.initial_cash = _finite(balance, 'initial_cash', positive=True)
@@ -77,9 +81,10 @@ class TradingEnvironment(gym.Env):
         RiskGatekeeper(self.settings_path)
         self.df = self._validate(candles)
         self.action_space = spaces.Discrete(3)
-        self.observation_space = spaces.Box(
-            low=np.array([-np.inf, -np.inf, 0, -np.inf], dtype=np.float32),
-            high=np.array([np.inf, np.inf, 1, np.inf], dtype=np.float32), dtype=np.float32)
+        lower = np.full(len(self.observation_names),-np.inf,dtype=np.float32)
+        upper = np.full(len(self.observation_names),np.inf,dtype=np.float32)
+        lower[2],upper[2] = 0,1
+        self.observation_space = spaces.Box(low=lower,high=upper,dtype=np.float32)
         self._done = True
 
     def _validate(self, candles):
@@ -112,6 +117,8 @@ class TradingEnvironment(gym.Env):
             raise ValueError('Prices must be positive and features finite')
         if ((df.high < df[required].max(axis=1)) | (df.low > df[required].min(axis=1))).any():
             raise ValueError('Inconsistent OHLC bounds')
+        if self.simulator_version == 5:
+            market_matrix(df)  # Reject missing/stale warmup instead of inventing neutral inputs.
         df = df.reset_index(drop=True)
         df['timestamp'] = stamps
         return df
@@ -140,13 +147,15 @@ class TradingEnvironment(gym.Env):
     def _get_obs(self):
         row = self.df.iloc[self.current_step]
         mtm = (row.close - self.entry_price) * self.quantity if self.position else 0.0
-        if self.simulator_version == 4:
+        if self.simulator_version in (4,5):
             # Fixed, causal units: percentage-point return prediction and account
             # fractions. No fitting on evaluation/practice observations.
             values = np.array([row.lstm_score * 100, self.cash / self.initial_cash,
                                self.position, mtm / self.initial_cash], dtype=np.float64)
         else:
             values = np.array([row.lstm_score, self.cash, self.position, mtm], dtype=np.float64)
+        if self.simulator_version == 5:
+            values = np.concatenate([values,market_matrix(self.df.iloc[[self.current_step]])[0]])
         if not np.isfinite(values).all() or (np.abs(values) > np.finfo(np.float32).max).any():
             raise ValueError('Account or feature observations overflow float32')
         return values.astype(np.float32)
@@ -175,6 +184,8 @@ class TradingEnvironment(gym.Env):
 
     @property
     def observation_schema(self):
+        if self.simulator_version == 5:
+            return MARKET_SCHEMA
         return 'account_fractions_return_percent_v1' if self.simulator_version == 4 else 'raw_account_v1'
 
     def execution_profile(self):

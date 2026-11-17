@@ -69,6 +69,11 @@ For the separately requested ₹50,000 / 5× paper-only sizing preset, see
 labels diagnostic forecast-validation overrides; original settings and
 real-money disablement remain available unchanged.
 
+For the zero-forecast/constant-flat-state issue, [MARKET_CONTEXT_PAPER.md](MARKET_CONTEXT_PAPER.md)
+adds an explicit version-5, 13-input paper-policy preset with independent causal
+market context. It requires a new model and keeps existing version-2/version-4
+artifacts/configurations reproducible. No reward or risk limit changes.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently
