@@ -10,6 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 from charges import IntradayCharges
 from data_loader import load_settings
+from forecast_features import RAW, RELATIVE, feature_matrix, feature_names
 from multi_session import (TRANSFORM, SessionEnvironment, SessionWindows,
                            load_sessions, score_session, split_sessions)
 from quant_agent import QuantLSTMBrain
@@ -33,11 +34,11 @@ def prediction_metrics(model, dataset, device, train_mean):
             'mean_prediction':float(predicted.mean()), 'mean_actual_return':float(actual.mean())}
 
 
-def fit_forecast(fit, validation, epochs, device):
+def fit_forecast(fit, validation, epochs, device, feature_set=RAW):
     scaler = StandardScaler().fit(np.concatenate([
-        day.loc[:, list(QuantLSTMBrain.FEATURES)].to_numpy(dtype=float) for day in fit]))
-    train = SessionWindows(fit, scaler)
-    valid = SessionWindows(validation, scaler)
+        feature_matrix(day,feature_set) for day in fit]))
+    train = SessionWindows(fit, scaler, feature_set)
+    valid = SessionWindows(validation, scaler, feature_set)
     train_mean = float(np.mean([train.targets[day][end] for day,end in train.samples]))
     model = QuantLSTMBrain().to(device)
     # Neutral initial forecast; train in basis points instead of tiny fractions.
@@ -132,7 +133,7 @@ def evaluate_sessions(policy, sessions, symbol, settings_path, initial_cash):
 
 def train_multisession(csv_path, settings_path, output_dir, *, symbol,
                        lstm_epochs=30, rl_timesteps=10000, seed=42,
-                       algorithm='PPO', allow_weak_forecast=False):
+                       algorithm='PPO', allow_weak_forecast=False, feature_set=RAW):
     for name, value in (('lstm_epochs',lstm_epochs),('rl_timesteps',rl_timesteps)):
         if isinstance(value,bool) or not isinstance(value,int) or value < 1:
             raise ValueError(f'{name} must be a positive integer')
@@ -149,7 +150,7 @@ def train_multisession(csv_path, settings_path, output_dir, *, symbol,
             or settings.get('data',{}).get('timezone') != 'Asia/Kolkata'
             or symbol not in settings.get('data',{}).get('supported_symbols',[])):
         raise ValueError('Use enabled simulation settings, IST and a configured symbol')
-    groups = split_sessions(load_sessions(csv_path, settings))
+    groups = split_sessions(load_sessions(csv_path, settings, feature_set))
     # Validate risk configuration before any model work.
     probe = TradingEnvironment(groups['fit'][0].assign(lstm_score=0),
                                symbol=symbol, settings_path=settings_path)
@@ -161,12 +162,13 @@ def train_multisession(csv_path, settings_path, output_dir, *, symbol,
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dates = {name:[str(day.index[0].date()) for day in days] for name,days in groups.items()}
     print('Chronological session groups:', json.dumps(dates), flush=True)
-    model, scaler, forecast = fit_forecast(groups['fit'],groups['validation'],lstm_epochs,device)
+    model, scaler, forecast = fit_forecast(groups['fit'],groups['validation'],lstm_epochs,device,feature_set)
     output.mkdir(parents=True, exist_ok=False)
     torch.save({key:value.detach().cpu() for key,value in model.state_dict().items()},output/'lstm.pt')
     np.savez(output/'feature_scaler.npz',mean=scaler.mean_,scale=scaler.scale_)
     report = {'training_pipeline':'multi_session_v1', 'simulator_version':4,
         'execution_profile':profile, 'forecast_transform':TRANSFORM.copy(),
+        'feature_transform':{'name':feature_set}, 'forecast_features':list(feature_names(feature_set)),
         'mode':'simulation','uses_real_money':False, 'symbol':symbol,'algorithm':algorithm,
         'seed':seed,'device':str(device),'timezone':'Asia/Kolkata',
         'target':'next_close_fractional_return','features':list(model.FEATURES),
@@ -183,7 +185,7 @@ def train_multisession(csv_path, settings_path, output_dir, *, symbol,
     if not forecast['validation_passed'] and not allow_weak_forecast:
         print('Forecast did not beat BOTH validation baselines. Policy training skipped. See forecast_report.json.',flush=True)
         return report
-    scored = {name:[score_session(model,day,scaler,device) for day in days]
+    scored = {name:[score_session(model,day,scaler,device,feature_set) for day in days]
               for name,days in groups.items() if name in ('rl','evaluation')}
     environment = SessionEnvironment(scored['rl'],symbol,settings_path)
     kwargs = ({'n_steps':32,'batch_size':16,'n_epochs':2} if algorithm == 'PPO' else
@@ -196,7 +198,7 @@ def train_multisession(csv_path, settings_path, output_dir, *, symbol,
     evaluation = evaluate_sessions(brain.model,scored['evaluation'],symbol,settings_path,profile['initial_cash_inr'])
     # Test forecast errors are measured only after all selection/training is complete.
     report['forecast_diagnostics']['evaluation'] = prediction_metrics(model,
-        SessionWindows(groups['evaluation'],scaler),device,forecast['training_mean_return'])
+        SessionWindows(groups['evaluation'],scaler,feature_set),device,forecast['training_mean_return'])
     report.update(status='trained',training_diagnostics=diagnostics.summary(),
                   evaluation=evaluation,training_parameters=kwargs,
                   rl_requested_timesteps=rl_timesteps,rl_actual_timesteps=brain.model.num_timesteps,
@@ -217,6 +219,7 @@ def main(argv=None):
     parser.add_argument('--lstm-epochs',type=int,default=30)
     parser.add_argument('--rl-timesteps',type=int,default=10000)
     parser.add_argument('--seed',type=int,default=42)
+    parser.add_argument('--feature-set',choices=(RAW,RELATIVE),default=RAW)
     parser.add_argument('--algorithm',choices=('PPO','DQN'),default='PPO')
     parser.add_argument('--allow-weak-forecast',action='store_true',
         help='Diagnostic override only: train a fake-money policy despite weak validation forecasts')
@@ -224,7 +227,7 @@ def main(argv=None):
     try:
         report = train_multisession(args.csv,args.settings,args.output_dir,symbol=args.symbol,
             lstm_epochs=args.lstm_epochs,rl_timesteps=args.rl_timesteps,seed=args.seed,
-            algorithm=args.algorithm,allow_weak_forecast=args.allow_weak_forecast)
+            algorithm=args.algorithm,allow_weak_forecast=args.allow_weak_forecast,feature_set=args.feature_set)
     except (ValueError,OSError,KeyError) as error:
         parser.exit(2,f'Training stopped: {error}\n')
     if report['status'] != 'trained':

@@ -102,6 +102,12 @@ Windows with a GTX 1650 use batches of 32 and keep sequence datasets on CPU;
 only the active batch is transferred to the GPU. No whole multi-day window tensor
 is stored on the GPU. All phases can also run on CPU.
 
+A versioned `--feature-set relative_v1` option is available for a separately
+reviewed input-representation experiment; the default remains `raw_v1`. See
+[PRICE_RELATIVE_EXPERIMENT.md](PRICE_RELATIVE_EXPERIMENT.md) before selecting it.
+Paper inference uses the feature schema saved with the model, not a guessed
+representation or an independently fitted scaler.
+
 ## Paper-test the reserved session
 
 Only after policy training succeeds:

@@ -7,6 +7,7 @@ from torch.utils.data import Dataset
 from data_loader import prepare_intraday_frame
 from quant_agent import QuantLSTMBrain
 from rl_brain import TradingEnvironment
+from forecast_features import RAW, feature_matrix, prepare_features
 
 TRANSFORM = {'output_units': 'basis_points', 'divide_by': 10000}
 
@@ -22,7 +23,7 @@ def forecast_divisor(metadata):
     return 10000.0
 
 
-def load_sessions(csv_path, settings):
+def load_sessions(csv_path, settings, feature_set=RAW):
     raw = pd.read_csv(csv_path)
     if 'timestamp' not in raw:
         raise ValueError('CSV needs timestamp,open,high,low,close,volume')
@@ -37,6 +38,7 @@ def load_sessions(csv_path, settings):
     for day in sorted(set(stamps.date)):
         frame = prepare_intraday_frame(raw.loc[stamps.date == day],
             rsi_period=settings.get('data', {}).get('rsi_period', 14))
+        frame = prepare_features(frame, feature_set)
         # Indicators reset separately each day; overnight prices never seed RSI.
         ready = frame.dropna(subset=list(QuantLSTMBrain.FEATURES))
         if len(ready) < 120:
@@ -68,11 +70,11 @@ def split_sessions(sessions):
 
 class SessionWindows(Dataset):
     """Lazy CPU windows; neither features nor next-close targets cross a day."""
-    def __init__(self, sessions, scaler):
+    def __init__(self, sessions, scaler, feature_set=RAW):
         self.arrays, self.targets, self.samples = [], [], []
         length = QuantLSTMBrain.SEQUENCE_LENGTH
         for session_id, frame in enumerate(sessions):
-            values = scaler.transform(frame.loc[:, list(QuantLSTMBrain.FEATURES)].to_numpy(dtype=float)).astype(np.float32)
+            values = scaler.transform(feature_matrix(frame,feature_set)).astype(np.float32)
             targets = (frame.close.shift(-1) / frame.close - 1).to_numpy(dtype=float)
             if not np.isfinite(values).all():
                 raise ValueError('Feature scaling overflow')
@@ -92,8 +94,8 @@ class SessionWindows(Dataset):
                 torch.tensor([self.targets[session][end] * 10000], dtype=torch.float32))
 
 
-def score_session(model, frame, scaler, device):
-    values = scaler.transform(frame.loc[:, list(QuantLSTMBrain.FEATURES)].to_numpy(dtype=float)).astype(np.float32)
+def score_session(model, frame, scaler, device, feature_set=RAW):
+    values = scaler.transform(feature_matrix(frame,feature_set)).astype(np.float32)
     if not np.isfinite(values).all():
         raise ValueError('Feature scaling overflow')
     length = QuantLSTMBrain.SEQUENCE_LENGTH

@@ -23,6 +23,7 @@ from paper_market_data import PaperDataError, ReadOnlyGrowwCandles
 from quant_agent import QuantLSTMBrain
 from rl_brain import TradingEnvironment
 from multi_session import forecast_divisor
+from forecast_features import feature_set_from_metadata, prepare_features, feature_matrix
 
 IST = ZoneInfo('Asia/Kolkata')
 DEFAULT_PAPER_SETTINGS = Path(__file__).with_name('paper_settings.json')
@@ -74,6 +75,7 @@ class FrozenPolicy:
                 or meta.get('algorithm') not in ('PPO','DQN')):
             raise ValueError('Model metadata is incompatible; train a matching model first')
         self.forecast_divisor = forecast_divisor(meta)
+        self.feature_set = feature_set_from_metadata(meta)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.lstm = QuantLSTMBrain().to(self.device).eval()
         self.lstm.load_state_dict(torch.load(root/'lstm.pt', weights_only=True, map_location=self.device))
@@ -89,11 +91,12 @@ class FrozenPolicy:
             raise ValueError('Invalid trained feature scaler')
 
     def score(self, features):
-        ready = features.dropna(subset=list(QuantLSTMBrain.FEATURES)).copy()
+        prepared = prepare_features(features,self.feature_set)
+        ready = prepared.dropna(subset=list(QuantLSTMBrain.FEATURES)).copy()
         length = QuantLSTMBrain.SEQUENCE_LENGTH
         if len(ready) < length:
             return ready.iloc[:0].assign(lstm_score=pd.Series(dtype=float))
-        values = (ready.loc[:, list(QuantLSTMBrain.FEATURES)].to_numpy(dtype=float) - self.mean) / self.scale
+        values = (feature_matrix(ready,self.feature_set) - self.mean) / self.scale
         if not np.isfinite(values).all() or (np.abs(values) > np.finfo(np.float32).max).any():
             raise ValueError('Paper features are nonfinite or overflow')
         if not (np.diff(ready.index.as_unit('ns').asi8) == 60_000_000_000).all():

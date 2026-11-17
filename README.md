@@ -54,6 +54,11 @@ If recent-history experiments produce no trades or no useful edge, follow
 [DATA_COLLECTION.md](DATA_COLLECTION.md) to accumulate immutable completed-day
 snapshots before another experiment. Repeated training is not additional history.
 
+For the input-distribution issue found in the uploaded development CSV, see
+[PRICE_RELATIVE_EXPERIMENT.md](PRICE_RELATIVE_EXPERIMENT.md). It compares raw and
+relative forecast inputs using nested chronological folds without training PPO
+or opening later evaluation/practice files.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently
