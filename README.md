@@ -74,6 +74,10 @@ adds an explicit version-5, 13-input paper-policy preset with independent causal
 market context. It requires a new model and keeps existing version-2/version-4
 artifacts/configurations reproducible. No reward or risk limit changes.
 
+When training exploration traded but a saved model stays flat in evaluation,
+[TRAINING_POLICY_AUDIT.md](TRAINING_POLICY_AUDIT.md) replays the frozen policy on
+its exact original RL dates. It is explicitly in-sample and performs no learning.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently
