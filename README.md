@@ -64,6 +64,11 @@ fixed 1/5/15-minute holding horizons with a simple baseline and full-cost,
 non-overlapping simulator replay. This produces research reports only; it does
 not train PPO or enable live trading.
 
+For the separately requested ₹50,000 / 5× paper-only sizing preset, see
+[PAPER_50K.md](PAPER_50K.md). It uses explicit new configuration files and
+labels diagnostic forecast-validation overrides; original settings and
+real-money disablement remain available unchanged.
+
 ## Offline training
 
 Supply a CSV with `timestamp,open,high,low,close,volume`. Each training run currently

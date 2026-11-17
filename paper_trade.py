@@ -190,7 +190,12 @@ class PaperRun:
         overlap = None
         if training_end and self.env:
             overlap = self.started_at <= pd.Timestamp(training_end)
+        forecast = self.model.metadata.get('forecast_diagnostics', {})
+        forecast_passed = forecast.get('validation_passed') if isinstance(forecast,dict) else None
+        override_used = self.model.metadata.get('allow_weak_forecast') is True and forecast_passed is False
         return {'mode':'paper', 'uses_real_money':False, 'learning_during_session':False,
+                'forecast_validation_passed':forecast_passed,
+                'forecast_validation_override_used':override_used,
                 'model_fingerprint':getattr(self.model,'fingerprint',None),
                 'algorithm':self.model.metadata.get('algorithm'),
                 'source':self.source, 'status':self.status, 'symbol':self.symbol,
@@ -335,6 +340,9 @@ def main(argv=None):
         model = FrozenPolicy(args.model_dir,args.symbol)
         features = (load_intraday_csv(args.csv,rsi_period=settings['data'].get('rsi_period',14))
                     if args.csv else None)
+        if (model.metadata.get('allow_weak_forecast') is True
+                and model.metadata.get('forecast_diagnostics',{}).get('validation_passed') is False):
+            print('DIAGNOSTIC PAPER MODEL: forecast validation was bypassed during training.')
         run = PaperRun(model,args.settings,args.output_dir,args.symbol,cash=args.cash,
                        source='groww_completed_candles' if args.live_data else 'csv_replay')
         if args.csv:
